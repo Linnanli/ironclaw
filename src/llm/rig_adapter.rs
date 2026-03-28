@@ -6,6 +6,7 @@
 use crate::llm::config::CacheRetention;
 use async_trait::async_trait;
 use rig::OneOrMany;
+use std::sync::Arc;
 use rig::completion::{
     AssistantContent, CompletionModel, CompletionRequest as RigRequest,
     ToolDefinition as RigToolDefinition, Usage as RigUsage,
@@ -34,18 +35,17 @@ use crate::llm::provider::{
 
 /// Adapter that wraps a rig-core `CompletionModel` and implements `LlmProvider`.
 pub struct RigAdapter<M: CompletionModel> {
-    model: M,
-    model_name: String,
+    model: std::sync::RwLock<M>,
+    /// 初始模型名（不变，用于 model_name() 返回 &str）。
+    initial_model_name: String,
+    /// 当前活跃模型名（可变，set_model 后更新）。
+    active_model: std::sync::RwLock<String>,
     input_cost: Decimal,
     output_cost: Decimal,
-    /// Prompt cache retention policy (Anthropic only).
-    /// When not `CacheRetention::None`, injects top-level `cache_control`
-    /// via `additional_params` for Anthropic automatic caching. Also controls
-    /// the cost multiplier for cache-creation tokens.
     cache_retention: CacheRetention,
-    /// Parameter names that this provider does not support (e.g., `"temperature"`).
-    /// These are stripped from requests before sending to avoid 400 errors.
     unsupported_params: HashSet<String>,
+    /// Optional factory to rebuild the model for runtime switching.
+    model_factory: Option<Arc<dyn Fn(&str) -> M + Send + Sync>>,
 }
 
 impl<M: CompletionModel> RigAdapter<M> {
@@ -55,12 +55,14 @@ impl<M: CompletionModel> RigAdapter<M> {
         let (input_cost, output_cost) =
             costs::model_cost(&name).unwrap_or_else(costs::default_cost);
         Self {
-            model,
-            model_name: name,
+            model: std::sync::RwLock::new(model),
+            initial_model_name: name.clone(),
+            active_model: std::sync::RwLock::new(name),
             input_cost,
             output_cost,
             cache_retention: CacheRetention::None,
             unsupported_params: HashSet::new(),
+            model_factory: None,
         }
     }
 
@@ -78,9 +80,10 @@ impl<M: CompletionModel> RigAdapter<M> {
     /// If the configured model does not support caching (e.g. claude-2),
     /// a warning is logged once at construction and caching is disabled.
     pub fn with_cache_retention(mut self, retention: CacheRetention) -> Self {
-        if retention != CacheRetention::None && !supports_prompt_cache(&self.model_name) {
+        let name = self.current_model_name();
+        if retention != CacheRetention::None && !supports_prompt_cache(&name) {
             tracing::warn!(
-                model = %self.model_name,
+                model = %name,
                 "Prompt caching requested but model does not support it; disabling"
             );
             self.cache_retention = CacheRetention::None;
@@ -97,6 +100,20 @@ impl<M: CompletionModel> RigAdapter<M> {
     pub fn with_unsupported_params(mut self, params: Vec<String>) -> Self {
         self.unsupported_params = params.into_iter().collect();
         self
+    }
+
+    /// Set a factory for runtime model switching.
+    ///
+    /// The factory captures a client reference and creates a new `CompletionModel`
+    /// for the given model name. Called by `set_model()` to rebuild the internal model.
+    pub fn with_model_factory(mut self, factory: Arc<dyn Fn(&str) -> M + Send + Sync>) -> Self {
+        self.model_factory = Some(factory);
+        self
+    }
+
+    /// Read the current model name from the RwLock.
+    fn current_model_name(&self) -> String {
+        self.active_model.read().expect("active_model lock poisoned").clone()
     }
 
     /// Strip unsupported fields from a `CompletionRequest` in place.
@@ -556,7 +573,7 @@ where
     M::Response: Send + Sync + Serialize + DeserializeOwned,
 {
     fn model_name(&self) -> &str {
-        &self.model_name
+        &self.initial_model_name
     }
 
     fn cost_per_token(&self) -> (Decimal, Decimal) {
@@ -583,16 +600,6 @@ where
         &self,
         mut request: CompletionRequest,
     ) -> Result<CompletionResponse, LlmError> {
-        if let Some(requested_model) = request.model.as_deref()
-            && requested_model != self.model_name.as_str()
-        {
-            tracing::warn!(
-                requested_model = requested_model,
-                active_model = %self.model_name,
-                "Per-request model override is not supported for this provider; using configured model"
-            );
-        }
-
         self.strip_unsupported_completion_params(&mut request);
 
         let mut messages = request.messages;
@@ -609,14 +616,14 @@ where
             self.cache_retention,
         )?;
 
-        let response =
-            self.model
-                .completion(rig_req)
-                .await
-                .map_err(|e| LlmError::RequestFailed {
-                    provider: self.model_name.clone(),
-                    reason: e.to_string(),
-                })?;
+        let model = self.model.read().expect("model lock poisoned").clone();
+        let response = model
+            .completion(rig_req)
+            .await
+            .map_err(|e| LlmError::RequestFailed {
+                provider: self.current_model_name(),
+                reason: e.to_string(),
+            })?;
 
         let (text, _tool_calls, finish) = extract_response(&response.choice, &response.usage);
 
@@ -631,7 +638,7 @@ where
 
         if resp.cache_read_input_tokens > 0 {
             tracing::debug!(
-                model = %self.model_name,
+                model = %self.current_model_name(),
                 input = resp.input_tokens,
                 output = resp.output_tokens,
                 cache_read = resp.cache_read_input_tokens,
@@ -646,16 +653,6 @@ where
         &self,
         mut request: ToolCompletionRequest,
     ) -> Result<ToolCompletionResponse, LlmError> {
-        if let Some(requested_model) = request.model.as_deref()
-            && requested_model != self.model_name.as_str()
-        {
-            tracing::warn!(
-                requested_model = requested_model,
-                active_model = %self.model_name,
-                "Per-request model override is not supported for this provider; using configured model"
-            );
-        }
-
         self.strip_unsupported_tool_params(&mut request);
 
         let known_tool_names: HashSet<String> =
@@ -677,14 +674,14 @@ where
             self.cache_retention,
         )?;
 
-        let response =
-            self.model
-                .completion(rig_req)
-                .await
-                .map_err(|e| LlmError::RequestFailed {
-                    provider: self.model_name.clone(),
-                    reason: e.to_string(),
-                })?;
+        let model = self.model.read().expect("model lock poisoned").clone();
+        let response = model
+            .completion(rig_req)
+            .await
+            .map_err(|e| LlmError::RequestFailed {
+                provider: self.current_model_name(),
+                reason: e.to_string(),
+            })?;
 
         let (text, mut tool_calls, finish) = extract_response(&response.choice, &response.usage);
 
@@ -713,7 +710,7 @@ where
 
         if resp.cache_read_input_tokens > 0 {
             tracing::debug!(
-                model = %self.model_name,
+                model = %self.current_model_name(),
                 input = resp.input_tokens,
                 output = resp.output_tokens,
                 cache_read = resp.cache_read_input_tokens,
@@ -725,22 +722,28 @@ where
     }
 
     fn active_model_name(&self) -> String {
-        self.model_name.clone()
+        self.current_model_name()
     }
 
     fn effective_model_name(&self, _requested_model: Option<&str>) -> String {
         self.active_model_name()
     }
 
-    fn set_model(&self, _model: &str) -> Result<(), LlmError> {
-        // rig-core models are baked at construction time.
-        // Switching requires creating a new adapter.
-        Err(LlmError::RequestFailed {
-            provider: self.model_name.clone(),
-            reason: "Runtime model switching not supported for rig-core providers. \
-                     Restart with a different model configured."
-                .to_string(),
-        })
+    fn set_model(&self, model: &str) -> Result<(), LlmError> {
+        if let Some(ref factory) = self.model_factory {
+            let new_model = factory(model);
+            *self.model.write().expect("model lock poisoned") = new_model;
+            *self.active_model.write().expect("active_model lock poisoned") = model.to_string();
+            tracing::debug!(model = %model, "RigAdapter model switched via factory");
+            Ok(())
+        } else {
+            Err(LlmError::RequestFailed {
+                provider: self.current_model_name(),
+                reason: "Runtime model switching not supported for this rig-core provider \
+                         (no model factory configured)."
+                    .to_string(),
+            })
+        }
     }
 }
 

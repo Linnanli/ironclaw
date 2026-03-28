@@ -262,6 +262,14 @@ fn create_openai_compat_from_registry(
     let client = client.completions_api();
     let model = client.completion_model(&config.model);
 
+    // Create a model factory for runtime model switching.
+    // The factory captures the client and creates a new CompletionModel
+    // for the requested model name.
+    let client_for_factory = client.clone();
+    let model_factory = Arc::new(move |name: &str| {
+        client_for_factory.completion_model(name)
+    });
+
     tracing::debug!(
         provider = %config.provider_id,
         model = %config.model,
@@ -270,7 +278,8 @@ fn create_openai_compat_from_registry(
     );
 
     let adapter = RigAdapter::new(model, &config.model)
-        .with_unsupported_params(config.unsupported_params.clone());
+        .with_unsupported_params(config.unsupported_params.clone())
+        .with_model_factory(model_factory);
     Ok(Arc::new(adapter))
 }
 
