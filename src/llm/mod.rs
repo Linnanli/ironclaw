@@ -140,7 +140,7 @@ pub fn create_llm_provider_with_config(
 /// Dispatches on `RegistryProviderConfig::protocol` to build the appropriate
 /// rig-core client. This single function replaces what used to be 5 separate
 /// `create_*_provider` functions.
-fn create_registry_provider(
+pub fn create_registry_provider(
     config: &RegistryProviderConfig,
     request_timeout_secs: u64,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
@@ -154,6 +154,40 @@ fn create_registry_provider(
         ProviderProtocol::Anthropic => create_anthropic_from_registry(config),
         ProviderProtocol::Ollama => create_ollama_from_registry(config),
     }
+}
+
+/// Create an OpenAI-compatible provider from raw parameters.
+///
+/// Convenience wrapper for runtime provider switching (e.g., desktop client
+/// cross-provider model switch). Callers pass plain strings instead of
+/// constructing `RegistryProviderConfig` directly (which requires `secrecy`).
+pub fn create_openai_provider(
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+) -> Result<Arc<dyn LlmProvider>, LlmError> {
+    tracing::debug!(
+        base_url = %base_url,
+        model = %model,
+        key_len = api_key.len(),
+        "create_openai_provider: building new provider"
+    );
+    let config = RegistryProviderConfig {
+        protocol: ProviderProtocol::OpenAiCompletions,
+        provider_id: "dynamic".to_string(),
+        api_key: Some(secrecy::SecretString::from(api_key.to_string())),
+        base_url: base_url.to_string(),
+        model: model.to_string(),
+        extra_headers: Vec::new(),
+        oauth_token: None,
+        is_codex_chatgpt: false,
+        refresh_token: None,
+        auth_path: None,
+        cache_retention: CacheRetention::default(),
+        unsupported_params: Vec::new(),
+        strict_tools_schema: true,
+    };
+    create_openai_compat_from_registry(&config)
 }
 
 fn create_codex_chatgpt_from_registry(
@@ -279,6 +313,7 @@ fn create_openai_compat_from_registry(
 
     let adapter = RigAdapter::new(model, &config.model)
         .with_unsupported_params(config.unsupported_params.clone())
+        .with_strict_tools_schema(config.strict_tools_schema)
         .with_model_factory(model_factory);
     Ok(Arc::new(adapter))
 }

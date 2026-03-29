@@ -250,6 +250,7 @@
     "model_env": "ZAI_MODEL",
     "default_model": "glm-5",
     "description": "Z.AI GLM inference API",
+    "strict_tools_schema": false,
     "setup": {
       "kind": "api_key",
       "secret_name": "llm_zai_api_key",

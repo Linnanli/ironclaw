@@ -148,6 +148,7 @@ impl GatewayWorkflowHarness {
             auth_path: None,
             cache_retention: Default::default(),
             unsupported_params: Vec::new(),
+            strict_tools_schema: true,
         });
 
         let llm_session = Arc::new(LlmSessionManager::new(LlmSessionConfig::default()));

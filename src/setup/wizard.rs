@@ -3740,6 +3740,7 @@ mod tests {
             extra_headers_env: None,
             setup: None,
             unsupported_params: vec![],
+            strict_tools_schema: true,
         });
         let registry = crate::llm::ProviderRegistry::new(providers);
 

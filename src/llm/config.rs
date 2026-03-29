@@ -100,6 +100,10 @@ pub struct RegistryProviderConfig {
     /// Supported keys: `"temperature"`, `"max_tokens"`, `"stop_sequences"`.
     /// Listed parameters are stripped from requests before sending to avoid 400 errors.
     pub unsupported_params: Vec<String>,
+    /// Whether to apply OpenAI strict-mode normalization to tool schemas.
+    /// Default `true`. Set `false` for providers that reject array-typed
+    /// `"type"` fields or `additionalProperties: false`.
+    pub strict_tools_schema: bool,
 }
 
 /// Configuration for AWS Bedrock (native Converse API).

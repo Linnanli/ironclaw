@@ -185,6 +185,23 @@ pub struct ProviderDefinition {
     /// Invalid parameter names cause a deserialization error.
     #[serde(default, deserialize_with = "unsupported_params_de::deserialize")]
     pub unsupported_params: Vec<String>,
+    /// Whether to apply OpenAI strict-mode normalization to tool schemas.
+    ///
+    /// When `true` (default), tool parameter schemas are rewritten to satisfy
+    /// OpenAI's strict function calling requirements:
+    /// - `additionalProperties: false` on every object
+    /// - All properties listed in `required`
+    /// - Optional properties made nullable via `"type": ["<orig>", "null"]`
+    ///
+    /// Set to `false` for providers whose OpenAI-compatible API rejects
+    /// these extensions (e.g., Z.AI GLM returns HTTP 400 on array-typed
+    /// `"type"` fields).
+    #[serde(default = "default_true")]
+    pub strict_tools_schema: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Registry of known LLM providers.
@@ -412,6 +429,7 @@ mod tests {
             extra_headers_env: None,
             setup: None,
             unsupported_params: vec![],
+            strict_tools_schema: true,
         });
         let registry = ProviderRegistry::new(all);
         let tf = registry.find("tinfoil").expect("tinfoil should exist");
@@ -552,6 +570,7 @@ mod tests {
             extra_headers_env: None,
             setup: None, // no setup hint
             unsupported_params: vec![],
+            strict_tools_schema: true,
         }];
 
         let registry = ProviderRegistry::new(providers.clone());
@@ -582,6 +601,7 @@ mod tests {
                 models_filter: None,
             }),
             unsupported_params: vec![],
+            strict_tools_schema: true,
         });
 
         let registry = ProviderRegistry::new(providers);
@@ -624,6 +644,7 @@ mod tests {
                     models_filter: None,
                 }),
                 unsupported_params: vec![],
+                strict_tools_schema: true,
             },
             // User override removes setup
             ProviderDefinition {
@@ -641,6 +662,7 @@ mod tests {
                 extra_headers_env: None,
                 setup: None,
                 unsupported_params: vec![],
+                strict_tools_schema: true,
             },
         ];
 
@@ -679,6 +701,7 @@ mod tests {
                     can_list_models: false,
                 }),
                 unsupported_params: vec![],
+                strict_tools_schema: true,
             },
             ProviderDefinition {
                 id: "bbb".to_string(),
@@ -698,6 +721,7 @@ mod tests {
                     can_list_models: false,
                 }),
                 unsupported_params: vec![],
+                strict_tools_schema: true,
             },
             ProviderDefinition {
                 id: "ccc".to_string(),
@@ -717,6 +741,7 @@ mod tests {
                     can_list_models: false,
                 }),
                 unsupported_params: vec![],
+                strict_tools_schema: true,
             },
             // User override for B
             ProviderDefinition {
@@ -737,6 +762,7 @@ mod tests {
                     can_list_models: false,
                 }),
                 unsupported_params: vec![],
+                strict_tools_schema: true,
             },
         ];
 

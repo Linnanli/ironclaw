@@ -46,6 +46,8 @@ pub struct RigAdapter<M: CompletionModel> {
     unsupported_params: HashSet<String>,
     /// Optional factory to rebuild the model for runtime switching.
     model_factory: Option<Arc<dyn Fn(&str) -> M + Send + Sync>>,
+    /// Whether to apply OpenAI strict-mode normalization to tool schemas.
+    strict_tools_schema: bool,
 }
 
 impl<M: CompletionModel> RigAdapter<M> {
@@ -63,6 +65,7 @@ impl<M: CompletionModel> RigAdapter<M> {
             cache_retention: CacheRetention::None,
             unsupported_params: HashSet::new(),
             model_factory: None,
+            strict_tools_schema: true,
         }
     }
 
@@ -108,6 +111,18 @@ impl<M: CompletionModel> RigAdapter<M> {
     /// for the given model name. Called by `set_model()` to rebuild the internal model.
     pub fn with_model_factory(mut self, factory: Arc<dyn Fn(&str) -> M + Send + Sync>) -> Self {
         self.model_factory = Some(factory);
+        self
+    }
+
+    /// Disable OpenAI strict-mode tool schema normalization.
+    ///
+    /// By default, tool parameter schemas are rewritten to satisfy OpenAI's
+    /// strict function calling requirements (`additionalProperties: false`,
+    /// all properties in `required`, optional fields made nullable via
+    /// `"type": ["<orig>", "null"]`). Some OpenAI-compatible APIs (e.g. Z.AI
+    /// GLM) reject these extensions with HTTP 400.
+    pub fn with_strict_tools_schema(mut self, strict: bool) -> Self {
+        self.strict_tools_schema = strict;
         self
     }
 
@@ -418,13 +433,17 @@ fn normalized_tool_call_id(raw: Option<&str>, seed: usize) -> String {
 ///
 /// Applies OpenAI strict-mode schema normalization to ensure all tool
 /// parameter schemas comply with OpenAI's function calling requirements.
-fn convert_tools(tools: &[IronToolDefinition]) -> Vec<RigToolDefinition> {
+fn convert_tools(tools: &[IronToolDefinition], strict_schema: bool) -> Vec<RigToolDefinition> {
     tools
         .iter()
         .map(|t| RigToolDefinition {
             name: t.name.clone(),
             description: t.description.clone(),
-            parameters: normalize_schema_strict(&t.parameters),
+            parameters: if strict_schema {
+                normalize_schema_strict(&t.parameters)
+            } else {
+                t.parameters.clone()
+            },
         })
         .collect()
 }
@@ -661,7 +680,7 @@ where
         let mut messages = request.messages;
         crate::llm::provider::sanitize_tool_messages(&mut messages);
         let (preamble, history) = convert_messages(&messages);
-        let tools = convert_tools(&request.tools);
+        let tools = convert_tools(&request.tools, self.strict_tools_schema);
         let tool_choice = convert_tool_choice(request.tool_choice.as_deref());
 
         let rig_req = build_rig_request(
@@ -675,6 +694,11 @@ where
         )?;
 
         let model = self.model.read().expect("model lock poisoned").clone();
+        tracing::debug!(
+            active_model = %self.current_model_name(),
+            strict_schema = self.strict_tools_schema,
+            "RigAdapter: sending complete_with_tools"
+        );
         let response = model
             .completion(rig_req)
             .await
@@ -876,7 +900,7 @@ mod tests {
                 }
             }),
         }];
-        let rig_tools = convert_tools(&tools);
+        let rig_tools = convert_tools(&tools, true);
         assert_eq!(rig_tools.len(), 1);
         assert_eq!(rig_tools[0].name, "search");
         assert_eq!(rig_tools[0].description, "Search the web");
