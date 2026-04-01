@@ -36,7 +36,8 @@ use crate::llm::provider::{
 
 /// Adapter that wraps a rig-core `CompletionModel` and implements `LlmProvider`.
 pub struct RigAdapter<M: CompletionModel> {
-    model: std::sync::RwLock<M>,
+    /// tokio RwLock so the guard is Send and can be held across await points.
+    model: tokio::sync::RwLock<M>,
     /// 初始模型名（不变，用于 model_name() 返回 &str）。
     initial_model_name: String,
     /// 当前活跃模型名（可变，set_model 后更新）。
@@ -58,7 +59,7 @@ impl<M: CompletionModel> RigAdapter<M> {
         let (input_cost, output_cost) =
             costs::model_cost(&name).unwrap_or_else(costs::default_cost);
         Self {
-            model: std::sync::RwLock::new(model),
+            model: tokio::sync::RwLock::new(model),
             initial_model_name: name.clone(),
             active_model: std::sync::RwLock::new(name),
             input_cost,
@@ -725,7 +726,7 @@ where
 
         inject_model_override(&mut rig_req, model_override.as_deref());
 
-        let model = self.model.read().expect("model lock poisoned");
+        let model = self.model.read().await;
         let response = model
             .completion(rig_req)
             .await
@@ -787,7 +788,7 @@ where
 
         inject_model_override(&mut rig_req, model_override.as_deref());
 
-        let model = self.model.read().expect("model lock poisoned");
+        let model = self.model.read().await;
         let response = model
             .completion(rig_req)
             .await
@@ -845,7 +846,7 @@ where
     fn set_model(&self, model: &str) -> Result<(), LlmError> {
         if let Some(ref factory) = self.model_factory {
             let new_model = factory(model);
-            *self.model.write().expect("model lock poisoned") = new_model;
+            *self.model.blocking_write() = new_model;
             *self.active_model.write().expect("active_model lock poisoned") = model.to_string();
             tracing::debug!(model = %model, "RigAdapter model switched via factory");
             Ok(())

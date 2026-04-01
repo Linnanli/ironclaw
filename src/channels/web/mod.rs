@@ -503,10 +503,6 @@ impl Channel for GatewayChannel {
                 cost_usd,
                 thread_id,
             },
-            StatusUpdate::TokenUsage { .. } => {
-                // Token usage is channel-level only; not an SSE event.
-                return Ok(());
-            }
         };
 
         // Scope events to the user when user_id is available in metadata.

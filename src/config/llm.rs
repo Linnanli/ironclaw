@@ -383,6 +383,7 @@ impl LlmConfig {
             auth_path: None,
             cache_retention: CacheRetention::default(),
             unsupported_params: Vec::new(),
+            strict_tools_schema: true,
         })
     }
 
