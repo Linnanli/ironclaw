@@ -10,7 +10,7 @@
 //! - `event_emit` - Emit a structured system event to `system_event`-triggered routines
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,6 +20,8 @@ use uuid::Uuid;
 
 use crate::agent::routine::{
     NotifyConfig, Routine, RoutineAction, RoutineGuardrails, Trigger, next_cron_fire,
+    normalize_cron_expression, reset_routine_verification_state, routine_verification_fingerprint,
+    routine_verification_status,
 };
 use crate::agent::routine_engine::RoutineEngine;
 use crate::context::JobContext;
@@ -46,6 +48,10 @@ enum NormalizedTriggerRequest {
         event_type: String,
         filters: HashMap<String, String>,
     },
+    Webhook {
+        path: Option<String>,
+        secret: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,7 +66,7 @@ struct NormalizedExecutionRequest {
     context_paths: Vec<String>,
     use_tools: bool,
     max_tool_rounds: u32,
-    tool_permissions: Vec<String>,
+    max_iterations: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +142,8 @@ fn execution_properties() -> Value {
         },
         "use_tools": {
             "type": "boolean",
-            "description": "Only applies to lightweight mode. When true, safe non-approval tools are available."
+            "default": true,
+            "description": "Only applies to lightweight mode. New lightweight routines default this to true; when enabled, the routine can use the owner's live autonomous tool scope."
         },
         "max_tool_rounds": {
             "type": "integer",
@@ -144,11 +151,6 @@ fn execution_properties() -> Value {
             "maximum": crate::agent::routine::MAX_TOOL_ROUNDS_LIMIT,
             "default": 3,
             "description": "Only applies when execution.mode='lightweight' and use_tools=true. Runtime-capped to prevent loops."
-        },
-        "tool_permissions": {
-            "type": "array",
-            "items": { "type": "string" },
-            "description": "Only applies when execution.mode='full_job'. These tools are pre-authorized for Always-approval checks."
         }
     })
 }
@@ -291,7 +293,7 @@ fn routine_request_discovery_schema() -> Value {
 fn lightweight_execution_variant() -> Value {
     serde_json::json!({
         "type": "object",
-        "description": "Default lightweight execution. Applies when execution is omitted or execution.mode='lightweight'.",
+        "description": "Default lightweight execution. Applies when execution is omitted or execution.mode='lightweight'. New lightweight routines default to tools enabled unless execution.use_tools=false is set.",
         "properties": {
             "mode": {
                 "type": "string",
@@ -305,7 +307,8 @@ fn lightweight_execution_variant() -> Value {
             },
             "use_tools": {
                 "type": "boolean",
-                "description": "When true, safe non-approval tools are available."
+                "default": true,
+                "description": "Defaults to true for new lightweight routines. When enabled, the routine can use the owner's live autonomous tool scope."
             },
             "max_tool_rounds": {
                 "type": "integer",
@@ -321,17 +324,19 @@ fn lightweight_execution_variant() -> Value {
 fn full_job_execution_variant() -> Value {
     serde_json::json!({
         "type": "object",
-        "description": "Full-job execution. Uses tool_permissions and ignores lightweight-only fields such as use_tools, max_tool_rounds, and context_paths.",
+        "description": "Full-job execution. Uses the owner's live autonomous tool scope and ignores lightweight-only fields such as use_tools, max_tool_rounds, and context_paths.",
         "properties": {
             "mode": {
                 "type": "string",
                 "enum": ["full_job"],
                 "description": "Full-job execution mode."
             },
-            "tool_permissions": {
-                "type": "array",
-                "items": { "type": "string" },
-                "description": "Tools pre-authorized for Always-approval checks."
+            "max_iterations": {
+                "type": "integer",
+                "description": "Maximum LLM iterations for the job (default: 25). Increase for complex multi-step tasks.",
+                "default": 25,
+                "minimum": 1,
+                "maximum": 200
             }
         },
         "required": ["mode"]
@@ -341,7 +346,7 @@ fn full_job_execution_variant() -> Value {
 fn execution_discovery_schema() -> Value {
     serde_json::json!({
         "type": "object",
-        "description": "Optional execution settings. Omit this block for the default lightweight mode.",
+        "description": "Optional execution settings. Omit this block for the default lightweight mode with tools enabled.",
         "properties": execution_properties(),
         "oneOf": [
             lightweight_execution_variant(),
@@ -349,7 +354,7 @@ fn execution_discovery_schema() -> Value {
         ],
         "examples": [
             { "mode": "lightweight", "use_tools": true, "max_tool_rounds": 3 },
-            { "mode": "full_job", "tool_permissions": ["message", "http"] }
+            { "mode": "full_job" }
         ]
     })
 }
@@ -398,8 +403,7 @@ fn routine_create_examples() -> Vec<Value> {
                 "filters": { "repository": "nearai/ironclaw" }
             },
             "execution": {
-                "mode": "full_job",
-                "tool_permissions": ["message"]
+                "mode": "full_job"
             }
         }),
     ]
@@ -412,16 +416,34 @@ fn routine_create_tool_summary() -> ToolDiscoverySummary {
             "request.kind='cron' requires request.schedule.".into(),
             "request.kind='message_event' requires request.pattern.".into(),
             "request.kind='system_event' requires request.source and request.event_type.".into(),
-            "execution.mode='full_job' uses tool_permissions and ignores use_tools, max_tool_rounds, and context_paths.".into(),
+            "execution.mode='full_job' uses the owner's live autonomous tool scope and ignores use_tools, max_tool_rounds, and context_paths.".into(),
         ],
         notes: vec![
-            "Omitting execution defaults to lightweight mode.".into(),
+            "Omitting execution defaults to lightweight mode with tools enabled.".into(),
+            "Set execution.use_tools=false to keep a new lightweight routine text-only.".into(),
             "Omitting delivery.user falls back to the owner's last-seen notification target.".into(),
             "advanced.cooldown_secs defaults to 300.".into(),
+            "Creating a routine only saves the configuration. It does not prove the routine can execute successfully.".into(),
+            "After routine_create, tell the user the routine is unverified and offer to test it now unless they asked not to.".into(),
             "Legacy flat aliases are still accepted for compatibility, but grouped fields are preferred.".into(),
         ],
         examples: routine_create_examples(),
     }
+}
+
+fn verification_result_payload(routine: &Routine, verification_reset: bool) -> Value {
+    let verification_status = routine_verification_status(routine);
+    serde_json::json!({
+        "verification_status": verification_status.as_str(),
+        "verification_reset": verification_reset,
+        "verification_hint": if verification_reset {
+            "The routine configuration changed and should be re-tested before being treated as reliable."
+        } else if verification_status == crate::agent::routine::RoutineVerificationStatus::Verified {
+            "The current routine configuration has already been verified with a successful run."
+        } else {
+            "The routine has been saved, but it has not been verified yet. Offer to test it now."
+        }
+    })
 }
 
 fn routine_create_schema(include_compatibility_aliases: bool) -> Value {
@@ -570,14 +592,6 @@ fn routine_create_schema(include_compatibility_aliases: bool) -> Value {
                 }),
             );
             properties.insert(
-                "tool_permissions".to_string(),
-                serde_json::json!({
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Compatibility alias for execution.tool_permissions."
-                }),
-            );
-            properties.insert(
                 "notify_channel".to_string(),
                 serde_json::json!({
                     "type": "string",
@@ -620,11 +634,13 @@ fn routine_create_schema(include_compatibility_aliases: bool) -> Value {
 }
 
 pub(crate) fn routine_create_parameters_schema() -> Value {
-    routine_create_schema(false)
+    static CACHE: OnceLock<Value> = OnceLock::new();
+    CACHE.get_or_init(|| routine_create_schema(false)).clone()
 }
 
 fn routine_create_discovery_schema() -> Value {
-    routine_create_schema(true)
+    static CACHE: OnceLock<Value> = OnceLock::new();
+    CACHE.get_or_init(|| routine_create_schema(true)).clone()
 }
 
 pub(crate) fn routine_update_parameters_schema() -> Value {
@@ -654,10 +670,33 @@ pub(crate) fn routine_update_parameters_schema() -> Value {
             "description": {
                 "type": "string",
                 "description": "New description"
+            },
+            "max_iterations": {
+                "type": "integer",
+                "description": "Maximum LLM iterations for full_job routines (1-200).",
+                "minimum": 1,
+                "maximum": 200
             }
         },
         "required": ["name"]
     })
+}
+
+const ROUTINE_LAST_NAME_STASH_KEY: &str = "__routine_last_name";
+
+async fn stash_last_routine_name(ctx: &JobContext, name: &str) {
+    ctx.tool_output_stash
+        .write()
+        .await
+        .insert(ROUTINE_LAST_NAME_STASH_KEY.to_string(), name.to_string());
+}
+
+async fn restore_last_routine_name(ctx: &JobContext) -> Option<String> {
+    ctx.tool_output_stash
+        .read()
+        .await
+        .get(ROUTINE_LAST_NAME_STASH_KEY)
+        .cloned()
 }
 
 fn nested_object<'a>(params: &'a Value, field: &str) -> Option<&'a Map<String, Value>> {
@@ -708,8 +747,18 @@ fn string_array_field(params: &Value, group: &str, field: &str, aliases: &[&str]
                 .find_map(|alias| params.get(*alias).and_then(Value::as_array))
         })
         .map(|arr| {
+            let mut seen = std::collections::HashSet::new();
             arr.iter()
-                .filter_map(|value| value.as_str().map(String::from))
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .filter_map(|value| {
+                    if seen.insert(value.to_string()) {
+                        Some(value.to_string())
+                    } else {
+                        None
+                    }
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -835,6 +884,11 @@ fn parse_routine_trigger(params: &Value) -> Result<NormalizedTriggerRequest, Too
                 filters,
             })
         }
+        "webhook" => {
+            let path = string_field(params, "request", "path", &["webhook_path"]);
+            let secret = string_field(params, "request", "secret", &["webhook_secret"]);
+            Ok(NormalizedTriggerRequest::Webhook { path, secret })
+        }
         other => Err(ToolError::InvalidParameters(format!(
             "unknown request.kind: {other}"
         ))),
@@ -851,28 +905,30 @@ fn parse_execution_mode(value: Option<String>) -> Result<NormalizedExecutionMode
     }
 }
 
-fn parse_routine_execution(params: &Value) -> Result<NormalizedExecutionRequest, ToolError> {
+fn parse_routine_execution(
+    params: &Value,
+    default_use_tools: bool,
+) -> Result<NormalizedExecutionRequest, ToolError> {
     let mode = parse_execution_mode(string_field(params, "execution", "mode", &["action_type"]))?;
     let context_paths =
         string_array_field(params, "execution", "context_paths", &["context_paths"]);
-    let use_tools = bool_field(params, "execution", "use_tools", &["use_tools"]).unwrap_or(false);
+    let use_tools =
+        bool_field(params, "execution", "use_tools", &["use_tools"]).unwrap_or(default_use_tools);
     let max_tool_rounds = u64_field(params, "execution", "max_tool_rounds", &["max_tool_rounds"])
         .unwrap_or(3)
         .clamp(1, crate::agent::routine::MAX_TOOL_ROUNDS_LIMIT as u64)
         as u32;
-    let tool_permissions = string_array_field(
-        params,
-        "execution",
-        "tool_permissions",
-        &["tool_permissions"],
-    );
+
+    let max_iterations = u64_field(params, "execution", "max_iterations", &["max_iterations"])
+        .unwrap_or(25)
+        .clamp(1, 200) as u32;
 
     Ok(NormalizedExecutionRequest {
         mode,
         context_paths,
         use_tools,
         max_tool_rounds,
-        tool_permissions,
+        max_iterations,
     })
 }
 
@@ -894,7 +950,7 @@ fn parse_routine_create_request(
         .unwrap_or("")
         .to_string();
     let trigger = parse_routine_trigger(params)?;
-    let execution = parse_routine_execution(params)?;
+    let execution = parse_routine_execution(params, true)?;
     let delivery = parse_routine_delivery(params);
     let cooldown_secs =
         u64_field(params, "advanced", "cooldown_secs", &["cooldown_secs"]).unwrap_or(300);
@@ -913,7 +969,7 @@ fn parse_routine_create_request(
 fn build_routine_trigger(trigger: &NormalizedTriggerRequest) -> Trigger {
     match trigger {
         NormalizedTriggerRequest::Cron { schedule, timezone } => Trigger::Cron {
-            schedule: schedule.clone(),
+            schedule: normalize_cron_expression(schedule),
             timezone: timezone.clone(),
         },
         NormalizedTriggerRequest::Manual => Trigger::Manual,
@@ -929,6 +985,10 @@ fn build_routine_trigger(trigger: &NormalizedTriggerRequest) -> Trigger {
             source: source.clone(),
             event_type: event_type.clone(),
             filters: filters.clone(),
+        },
+        NormalizedTriggerRequest::Webhook { path, secret } => Trigger::Webhook {
+            path: path.clone(),
+            secret: secret.clone(),
         },
     }
 }
@@ -949,10 +1009,16 @@ fn build_routine_action(
         NormalizedExecutionMode::FullJob => RoutineAction::FullJob {
             title: name.to_string(),
             description: prompt.to_string(),
-            max_iterations: 10,
-            tool_permissions: execution.tool_permissions.clone(),
+            max_iterations: execution.max_iterations,
         },
     }
+}
+
+fn routine_requests_full_job(params: &Value) -> bool {
+    matches!(
+        string_field(params, "execution", "mode", &["action_type"]).as_deref(),
+        Some("full_job")
+    )
 }
 
 fn event_emit_schema(include_source_alias: bool) -> Value {
@@ -1003,11 +1069,13 @@ fn event_emit_schema(include_source_alias: bool) -> Value {
 }
 
 pub(crate) fn event_emit_parameters_schema() -> Value {
-    event_emit_schema(false)
+    static CACHE: OnceLock<Value> = OnceLock::new();
+    CACHE.get_or_init(|| event_emit_schema(false)).clone()
 }
 
 fn event_emit_discovery_schema() -> Value {
-    event_emit_schema(true)
+    static CACHE: OnceLock<Value> = OnceLock::new();
+    CACHE.get_or_init(|| event_emit_schema(true)).clone()
 }
 
 fn parse_event_emit_args(params: &Value) -> Result<(String, String, Value), ToolError> {
@@ -1049,7 +1117,16 @@ impl Tool for RoutineCreateTool {
     fn description(&self) -> &str {
         "Create a new routine (scheduled or event-driven task). \
          Supports cron schedules, event pattern matching, system events, and manual triggers. \
-         Use this when the user wants something to happen periodically or reactively."
+         Use this when the user wants something to happen periodically or reactively. \
+         Creation saves the routine, but does not verify that it will execute successfully."
+    }
+
+    fn requires_approval(&self, params: &serde_json::Value) -> ApprovalRequirement {
+        if routine_requests_full_job(params) {
+            ApprovalRequirement::UnlessAutoApproved
+        } else {
+            ApprovalRequirement::Never
+        }
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1071,6 +1148,7 @@ impl Tool for RoutineCreateTool {
     ) -> Result<ToolOutput, ToolError> {
         let start = std::time::Instant::now();
         let normalized = parse_routine_create_request(&params)?;
+        stash_last_routine_name(ctx, &normalized.name).await;
         let trigger = build_routine_trigger(&normalized.trigger);
         let action =
             build_routine_action(&normalized.name, &normalized.prompt, &normalized.execution);
@@ -1086,7 +1164,7 @@ impl Tool for RoutineCreateTool {
             None
         };
 
-        let routine = Routine {
+        let mut routine = Routine {
             id: Uuid::new_v4(),
             name: normalized.name.clone(),
             description: normalized.description.clone(),
@@ -1112,6 +1190,10 @@ impl Tool for RoutineCreateTool {
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
+        routine.state = reset_routine_verification_state(
+            &routine.state,
+            routine_verification_fingerprint(&routine),
+        );
 
         self.store
             .create_routine(&routine)
@@ -1126,12 +1208,14 @@ impl Tool for RoutineCreateTool {
             self.engine.refresh_event_cache().await;
         }
 
+        let verification = verification_result_payload(&routine, false);
         let result = serde_json::json!({
             "id": routine.id.to_string(),
-            "name": routine.name,
+            "name": routine.name.clone(),
             "trigger_type": routine.trigger.type_tag(),
             "next_fire_at": routine.next_fire_at.map(|t| t.to_rfc3339()),
             "status": "created",
+            "verification": verification,
         });
 
         Ok(ToolOutput::success(result, start.elapsed()))
@@ -1184,10 +1268,24 @@ impl Tool for RoutineListTool {
             .list_routines(&ctx.user_id)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("failed to list routines: {e}")))?;
+        let routine_ids: Vec<Uuid> = routines.iter().map(|routine| routine.id).collect();
+        let last_run_statuses = self
+            .store
+            .batch_get_last_run_status(&routine_ids)
+            .await
+            .map_err(|e| {
+                ToolError::ExecutionFailed(format!("failed to read routine statuses: {e}"))
+            })?;
 
         let list: Vec<serde_json::Value> = routines
             .iter()
             .map(|r| {
+                let verification_status = routine_verification_status(r);
+                let status = crate::agent::routine::routine_display_status_for_verification(
+                    r,
+                    verification_status,
+                    last_run_statuses.get(&r.id).copied(),
+                );
                 serde_json::json!({
                     "id": r.id.to_string(),
                     "name": r.name,
@@ -1199,6 +1297,8 @@ impl Tool for RoutineListTool {
                     "next_fire_at": r.next_fire_at.map(|t| t.to_rfc3339()),
                     "run_count": r.run_count,
                     "consecutive_failures": r.consecutive_failures,
+                    "status": status.as_str(),
+                    "verification_status": verification_status.as_str(),
                 })
             })
             .collect();
@@ -1236,8 +1336,9 @@ impl Tool for RoutineUpdateTool {
     }
 
     fn description(&self) -> &str {
-        "Update an existing routine. Can change prompt, description, enabled state, or cron schedule/timezone. \
-         Pass the routine name and only the fields you want to change. This does not convert trigger types."
+        "Update an existing routine. Can change prompt, description, enabled state, cron schedule/timezone, \
+         Pass the routine name and only the fields you want to change. This does not convert trigger types. \
+         Behavior-changing edits should leave the routine marked unverified until it is tested again."
     }
 
     fn parameters_schema(&self) -> serde_json::Value {
@@ -1252,6 +1353,7 @@ impl Tool for RoutineUpdateTool {
         let start = std::time::Instant::now();
 
         let name = require_str(&params, "name")?;
+        stash_last_routine_name(ctx, name).await;
 
         let mut routine = self
             .store
@@ -1259,6 +1361,9 @@ impl Tool for RoutineUpdateTool {
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("DB error: {e}")))?
             .ok_or_else(|| ToolError::ExecutionFailed(format!("routine '{}' not found", name)))?;
+
+        let original_fingerprint = routine_verification_fingerprint(&routine);
+        let mut verification_reset = false;
 
         // Apply updates
         if let Some(enabled) = params.get("enabled").and_then(|v| v.as_bool()) {
@@ -1271,9 +1376,25 @@ impl Tool for RoutineUpdateTool {
 
         if let Some(prompt) = params.get("prompt").and_then(|v| v.as_str()) {
             match &mut routine.action {
-                RoutineAction::Lightweight { prompt: p, .. } => *p = prompt.to_string(),
-                RoutineAction::FullJob { description: d, .. } => *d = prompt.to_string(),
+                RoutineAction::Lightweight { prompt: p, .. } => {
+                    if p != prompt {
+                        verification_reset = true;
+                        *p = prompt.to_string();
+                    }
+                }
+                RoutineAction::FullJob { description: d, .. } => {
+                    if d != prompt {
+                        verification_reset = true;
+                        *d = prompt.to_string();
+                    }
+                }
             }
+        }
+
+        if let Some(iters) = params.get("max_iterations").and_then(|v| v.as_u64())
+            && let RoutineAction::FullJob { max_iterations, .. } = &mut routine.action
+        {
+            *max_iterations = (iters.clamp(1, 200)) as u32;
         }
 
         // Validate timezone param if provided
@@ -1289,7 +1410,10 @@ impl Tool for RoutineUpdateTool {
             })
             .transpose()?;
 
-        let new_schedule = params.get("schedule").and_then(|v| v.as_str());
+        let new_schedule = params
+            .get("schedule")
+            .and_then(|v| v.as_str())
+            .map(normalize_cron_expression);
 
         if new_schedule.is_some() || new_timezone.is_some() {
             // Extract existing cron fields (cloned to avoid borrow conflict)
@@ -1299,12 +1423,16 @@ impl Tool for RoutineUpdateTool {
             };
 
             if let Some((old_schedule, old_tz)) = existing_cron {
-                let effective_schedule = new_schedule.unwrap_or(&old_schedule);
-                let effective_tz = new_timezone.or(old_tz);
+                let effective_schedule = new_schedule.as_deref().unwrap_or(&old_schedule);
+                let effective_tz = new_timezone.clone().or(old_tz.clone());
                 // Validate
                 next_cron_fire(effective_schedule, effective_tz.as_deref()).map_err(|e| {
                     ToolError::InvalidParameters(format!("invalid cron schedule: {e}"))
                 })?;
+
+                if effective_schedule != old_schedule || effective_tz != old_tz {
+                    verification_reset = true;
+                }
 
                 routine.trigger = Trigger::Cron {
                     schedule: effective_schedule.to_string(),
@@ -1319,6 +1447,12 @@ impl Tool for RoutineUpdateTool {
             }
         }
 
+        let updated_fingerprint = routine_verification_fingerprint(&routine);
+        if updated_fingerprint != original_fingerprint {
+            verification_reset = true;
+            routine.state = reset_routine_verification_state(&routine.state, updated_fingerprint);
+        }
+
         self.store
             .update_routine(&routine)
             .await
@@ -1327,12 +1461,14 @@ impl Tool for RoutineUpdateTool {
         // Refresh event cache in case trigger changed
         self.engine.refresh_event_cache().await;
 
+        let verification = verification_result_payload(&routine, verification_reset);
         let result = serde_json::json!({
-            "name": routine.name,
+            "name": routine.name.clone(),
             "enabled": routine.enabled,
             "trigger_type": routine.trigger.type_tag(),
             "next_fire_at": routine.next_fire_at.map(|t| t.to_rfc3339()),
             "status": "updated",
+            "verification": verification,
         });
 
         Ok(ToolOutput::success(result, start.elapsed()))
@@ -1386,11 +1522,24 @@ impl Tool for RoutineDeleteTool {
     ) -> Result<ToolOutput, ToolError> {
         let start = std::time::Instant::now();
 
-        let name = require_str(&params, "name")?;
+        let name = if let Some(name) = params.get("name").and_then(|v| v.as_str()) {
+            if name.trim().is_empty() {
+                return Err(ToolError::InvalidParameters(
+                    "'name' parameter cannot be empty".to_string(),
+                ));
+            }
+            name.to_string()
+        } else {
+            restore_last_routine_name(ctx).await.ok_or_else(|| {
+                ToolError::InvalidParameters(
+                    "missing 'name' parameter and no previous routine target to infer".to_string(),
+                )
+            })?
+        };
 
         let routine = self
             .store
-            .get_routine_by_name(&ctx.user_id, name)
+            .get_routine_by_name(&ctx.user_id, &name)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("DB error: {e}")))?
             .ok_or_else(|| ToolError::ExecutionFailed(format!("routine '{}' not found", name)))?;
@@ -1405,7 +1554,7 @@ impl Tool for RoutineDeleteTool {
         self.engine.refresh_event_cache().await;
 
         let result = serde_json::json!({
-            "name": name,
+            "name": &name,
             "deleted": deleted,
         });
 
@@ -1487,6 +1636,7 @@ impl Tool for RoutineFireTool {
             "name": name,
             "run_id": run_id.to_string(),
             "status": "fired",
+            "note": "Routine is executing asynchronously. Use routine_history to check the result.",
         });
 
         Ok(ToolOutput::success(result, start.elapsed()))
@@ -1585,10 +1735,47 @@ impl Tool for RoutineHistoryTool {
             })
             .collect();
 
+        // Look up the routine's conversation thread and fetch recent messages
+        // so the user can see the full output of routine runs.
+        let (conversation_id, recent_output) = match self
+            .store
+            .get_or_create_routine_conversation(routine.id, name, &ctx.user_id)
+            .await
+        {
+            Ok(conv_id) => {
+                let messages = self
+                    .store
+                    .list_conversation_messages_paginated(conv_id, None, limit)
+                    .await
+                    .map(|(msgs, _)| msgs)
+                    .unwrap_or_default();
+                let msg_list: Vec<serde_json::Value> = messages
+                    .iter()
+                    .map(|m| {
+                        serde_json::json!({
+                            "role": m.role,
+                            "content": m.content,
+                            "timestamp": m.created_at.to_rfc3339(),
+                        })
+                    })
+                    .collect();
+                (Some(conv_id.to_string()), msg_list)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    routine = %name,
+                    "Failed to fetch routine conversation thread: {e}"
+                );
+                (None, Vec::new())
+            }
+        };
+
         let result = serde_json::json!({
             "routine": name,
             "total_runs": routine.run_count,
+            "conversation_id": conversation_id,
             "runs": run_list,
+            "recent_output": recent_output,
         });
 
         Ok(ToolOutput::success(result, start.elapsed()))
@@ -1683,7 +1870,6 @@ mod tests {
         "context_paths",
         "use_tools",
         "max_tool_rounds",
-        "tool_permissions",
         "notify_channel",
         "notify_user",
         "cooldown_secs",
@@ -1782,8 +1968,7 @@ mod tests {
                 "timezone": "UTC"
             },
             "execution": {
-                "mode": "full_job",
-                "tool_permissions": ["message", "http"]
+                "mode": "full_job"
             },
             "delivery": {
                 "channel": "telegram",
@@ -1808,13 +1993,23 @@ mod tests {
             matches!(parsed.execution.mode, NormalizedExecutionMode::FullJob),
             "expected full_job execution mode",
         );
-        assert_eq!(
-            parsed.execution.tool_permissions,
-            vec!["message".to_string(), "http".to_string()],
-        );
         assert_eq!(parsed.delivery.channel.as_deref(), Some("telegram"));
         assert_eq!(parsed.delivery.user.as_deref(), Some("ops-team"));
         assert_eq!(parsed.cooldown_secs, 30);
+    }
+
+    #[test]
+    fn build_routine_trigger_normalizes_cron_schedule() {
+        let trigger = build_routine_trigger(&NormalizedTriggerRequest::Cron {
+            schedule: "0 0 9 * * MON-FRI".to_string(),
+            timezone: Some("UTC".to_string()),
+        });
+
+        assert!(matches!(
+            trigger,
+            Trigger::Cron { schedule, timezone }
+                if schedule == "0 0 9 * * MON-FRI *" && timezone.as_deref() == Some("UTC")
+        ));
     }
 
     #[test]
@@ -1850,6 +2045,87 @@ mod tests {
         assert_eq!(
             parsed.execution.context_paths,
             vec!["context/deploy.md".to_string()],
+        );
+    }
+
+    #[test]
+    fn parses_lightweight_create_with_tools_enabled_by_default() {
+        let params = serde_json::json!({
+            "name": "manual-check",
+            "prompt": "Inspect the repo for issues.",
+            "request": {
+                "kind": "manual"
+            }
+        });
+
+        let parsed = parse_routine_create_request(&params).expect("parse default lightweight");
+
+        assert!(
+            matches!(parsed.execution.mode, NormalizedExecutionMode::Lightweight),
+            "expected lightweight execution mode",
+        );
+        assert!(
+            parsed.execution.use_tools,
+            "new lightweight routines should default use_tools=true",
+        );
+        assert_eq!(parsed.execution.max_tool_rounds, 3);
+    }
+
+    #[test]
+    fn parses_lightweight_create_with_explicit_tools_disabled() {
+        let params = serde_json::json!({
+            "name": "manual-check",
+            "prompt": "Inspect the repo for issues.",
+            "request": {
+                "kind": "manual"
+            },
+            "execution": {
+                "use_tools": false
+            }
+        });
+
+        let parsed =
+            parse_routine_create_request(&params).expect("parse lightweight with tools disabled");
+
+        assert!(
+            matches!(parsed.execution.mode, NormalizedExecutionMode::Lightweight),
+            "expected lightweight execution mode",
+        );
+        assert!(
+            !parsed.execution.use_tools,
+            "explicit use_tools=false should be preserved",
+        );
+        assert_eq!(parsed.execution.max_tool_rounds, 3);
+    }
+
+    #[test]
+    fn parses_context_paths_with_trim_drop_empty_and_stable_dedupe() {
+        let params = serde_json::json!({
+            "name": "deploy-watch",
+            "prompt": "Look for deploy requests.",
+            "request": {
+                "kind": "manual"
+            },
+            "execution": {
+                "context_paths": [
+                    " context/deploy.md ",
+                    "",
+                    "   ",
+                    "context/deploy.md",
+                    "context/notes.md"
+                ]
+            }
+        });
+
+        let parsed =
+            parse_routine_create_request(&params).expect("parse context_paths normalization");
+
+        assert_eq!(
+            parsed.execution.context_paths,
+            vec![
+                "context/deploy.md".to_string(),
+                "context/notes.md".to_string()
+            ],
         );
     }
 
@@ -1932,7 +2208,6 @@ mod tests {
             "event_pattern": "hello",
             "event_channel": "telegram",
             "action_type": "full_job",
-            "tool_permissions": ["message"],
             "notify_channel": "telegram",
             "notify_user": "123"
         });
@@ -1950,10 +2225,6 @@ mod tests {
         assert!(
             matches!(parsed.execution.mode, NormalizedExecutionMode::FullJob),
             "expected full_job execution mode",
-        );
-        assert_eq!(
-            parsed.execution.tool_permissions,
-            vec!["message".to_string()],
         );
         assert_eq!(parsed.delivery.channel.as_deref(), Some("telegram"));
         assert_eq!(parsed.delivery.user.as_deref(), Some("123"));
@@ -2141,8 +2412,8 @@ mod tests {
             .and_then(Value::as_object)
             .expect("full_job properties");
         assert!(
-            full_job_props.contains_key("tool_permissions"),
-            "full_job variant should expose tool_permissions",
+            full_job_props.contains_key("mode") && full_job_props.contains_key("max_iterations"),
+            "full_job variant should expose mode and max_iterations",
         );
     }
 
@@ -2164,6 +2435,20 @@ mod tests {
                 .iter()
                 .any(|rule| rule.contains("request.kind='cron'")),
             "summary should explain cron requirement",
+        );
+        assert!(
+            summary
+                .notes
+                .iter()
+                .any(|note| note.contains("lightweight mode with tools enabled")),
+            "summary should mention the new lightweight default",
+        );
+        assert!(
+            summary
+                .notes
+                .iter()
+                .any(|note| note.contains("execution.use_tools=false")),
+            "summary should mention the text-only opt-out",
         );
         assert!(
             summary
@@ -2271,6 +2556,24 @@ mod tests {
     }
 
     #[test]
+    fn routine_create_detects_full_job_requests_for_approval() {
+        let full_job = serde_json::json!({
+            "name": "approve-me",
+            "prompt": "Run autonomously",
+            "request": { "kind": "manual" },
+            "execution": { "mode": "full_job" }
+        });
+        let lightweight = serde_json::json!({
+            "name": "safe",
+            "prompt": "Stay lightweight",
+            "request": { "kind": "manual" }
+        });
+
+        assert!(routine_requests_full_job(&full_job));
+        assert!(!routine_requests_full_job(&lightweight));
+    }
+
+    #[test]
     fn event_emit_parameters_schema_prefers_canonical_event_source() {
         let schema = event_emit_parameters_schema();
         let errors = validate_tool_schema(&schema, "event_emit");
@@ -2309,5 +2612,29 @@ mod tests {
             schema_property(&schema, "source").is_object(),
             "event_emit discovery schema should keep source alias",
         );
+    }
+
+    #[test]
+    fn build_full_job_action_uses_live_owner_scope_defaults() {
+        let execution = NormalizedExecutionRequest {
+            mode: NormalizedExecutionMode::FullJob,
+            context_paths: Vec::new(),
+            use_tools: false,
+            max_tool_rounds: 3,
+            max_iterations: 25,
+        };
+
+        let action = build_routine_action("issue-1316", "Run it", &execution);
+
+        assert!(matches!(
+            action,
+            RoutineAction::FullJob {
+                title,
+                description,
+                max_iterations,
+            } if title == "issue-1316"
+                && description == "Run it"
+                && max_iterations == 25
+        ));
     }
 }

@@ -192,6 +192,9 @@ pub struct JobContext {
     /// but subsequent tools (e.g., `json`) may need the full output. This
     /// stash stores the complete, unsanitized output so tools can reference
     /// previous results by ID via `$tool_call_id` parameter syntax.
+    ///
+    /// Also used for cross-tool implicit state (keys prefixed with `__`) such
+    /// as `__routine_last_name` for fallback recovery in routine tool chains.
     #[serde(skip)]
     pub tool_output_stash: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
     /// User's preferred timezone (IANA name, e.g. "America/New_York"). Defaults to "UTC".
@@ -258,13 +261,6 @@ impl JobContext {
         new_state: JobState,
         reason: Option<String>,
     ) -> Result<(), String> {
-        debug_assert!(
-            self.state.can_transition_to(new_state),
-            "BUG: invalid job state transition {} -> {} for job {}",
-            self.state,
-            new_state,
-            self.job_id
-        );
         if !self.state.can_transition_to(new_state) {
             return Err(format!(
                 "Cannot transition from {} to {}",
