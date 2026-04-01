@@ -625,6 +625,9 @@ impl Channel for ReplChannel {
             StatusUpdate::Suggestions { .. } => {
                 // Suggestions are only rendered by the web gateway
             }
+            StatusUpdate::TokenUsage { .. } => {
+                // Token usage is channel-level only; not printed to REPL.
+            }
         }
         Ok(())
     }

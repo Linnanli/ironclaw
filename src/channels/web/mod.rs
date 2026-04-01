@@ -403,6 +403,10 @@ impl Channel for GatewayChannel {
                 suggestions,
                 thread_id,
             },
+            StatusUpdate::TokenUsage { .. } => {
+                // Token usage is channel-level only; not an SSE event.
+                return Ok(());
+            }
         };
 
         self.state.sse.broadcast(event);

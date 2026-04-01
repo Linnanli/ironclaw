@@ -406,6 +406,21 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
             call_cost,
         );
 
+        // Emit token usage so channel implementations can track per-turn consumption.
+        let _ = self
+            .agent
+            .channels
+            .send_status(
+                &self.message.channel,
+                StatusUpdate::TokenUsage {
+                    model: model_name,
+                    input_tokens: output.usage.input_tokens,
+                    output_tokens: output.usage.output_tokens,
+                },
+                &self.message.metadata,
+            )
+            .await;
+
         Ok(output)
     }
 

@@ -3047,6 +3047,8 @@ fn status_to_wit(
         },
         // Suggestions are web-gateway-only; skip for WASM channels
         StatusUpdate::Suggestions { .. } => return None,
+        // Token usage is channel-level only; skip for WASM channels.
+        StatusUpdate::TokenUsage { .. } => return None,
     })
 }
 

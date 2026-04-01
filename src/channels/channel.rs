@@ -328,6 +328,15 @@ pub enum StatusUpdate {
     },
     /// Suggested follow-up messages for the user.
     Suggestions { suggestions: Vec<String> },
+    /// Token usage from a completed LLM call.
+    ///
+    /// Emitted after each LLM call so channel implementations can track
+    /// per-turn token consumption without accessing the LLM provider directly.
+    TokenUsage {
+        model: String,
+        input_tokens: u32,
+        output_tokens: u32,
+    },
 }
 
 impl StatusUpdate {
