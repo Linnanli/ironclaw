@@ -33,6 +33,12 @@ use crate::skills::SkillRegistry;
 use crate::tools::ToolRegistry;
 use crate::workspace::Workspace;
 
+/// spawn task 的返回值，指示主循环是否应该退出。
+enum MessageAction {
+    Continue,
+    Shutdown,
+}
+
 /// Static greeting persisted to DB and broadcast on first launch.
 ///
 /// Sent before the LLM is involved so the user sees something immediately.
@@ -859,6 +865,12 @@ impl Agent {
         // Main message loop
         tracing::debug!("Agent {} ready and listening", self.config.name);
 
+        // 将 self 包装为 Arc，支持消息并发处理。
+        // 初始化阶段（上面的代码）需要 &mut self 访问，所以在消息循环开始前才 Arc 化。
+        let agent = Arc::new(self);
+        let (shutdown_tx, _) = tokio::sync::watch::channel(false);
+        let mut tasks = tokio::task::JoinSet::new();
+
         loop {
             let message = tokio::select! {
                 biased;
@@ -879,91 +891,49 @@ impl Agent {
 
             // Apply transcription middleware to audio attachments
             let mut message = message;
-            if let Some(ref transcription) = self.deps.transcription {
+            if let Some(ref transcription) = agent.deps.transcription {
                 transcription.process(&mut message).await;
             }
 
             // Apply document extraction middleware to document attachments
-            if let Some(ref doc_extraction) = self.deps.document_extraction {
+            if let Some(ref doc_extraction) = agent.deps.document_extraction {
                 doc_extraction.process(&mut message).await;
             }
 
             // Store successfully extracted document text in workspace for indexing
-            self.store_extracted_documents(&message).await;
+            agent.store_extracted_documents(&message).await;
 
-            match self.handle_message(&message).await {
-                Ok(Some(response)) if !response.is_empty() => {
-                    // Hook: BeforeOutbound — allow hooks to modify or suppress outbound
-                    let event = crate::hooks::HookEvent::Outbound {
-                        user_id: message.user_id.clone(),
-                        channel: message.channel.clone(),
-                        content: response.clone(),
-                        thread_id: message.thread_id.clone(),
-                    };
-                    match self.hooks().run(&event).await {
-                        Err(err) => {
-                            tracing::warn!("BeforeOutbound hook blocked response: {}", err);
-                        }
-                        Ok(crate::hooks::HookOutcome::Continue {
-                            modified: Some(new_content),
-                        }) => {
-                            if let Err(e) = self
-                                .channels
-                                .respond(&message, OutgoingResponse::text(new_content))
-                                .await
-                            {
-                                tracing::error!(
-                                    channel = %message.channel,
-                                    error = %e,
-                                    "Failed to send response to channel"
-                                );
-                            }
-                        }
-                        _ => {
-                            if let Err(e) = self
-                                .channels
-                                .respond(&message, OutgoingResponse::text(response))
-                                .await
-                            {
-                                tracing::error!(
-                                    channel = %message.channel,
-                                    error = %e,
-                                    "Failed to send response to channel"
-                                );
-                            }
-                        }
+            // Spawn 独立 task 处理消息，不阻塞主循环接收下一条消息。
+            let agent_ref = Arc::clone(&agent);
+            tasks.spawn(async move {
+                let result = agent_ref.handle_message(&message).await;
+                agent_ref.dispatch_result(result, &message).await
+            });
+
+            // 清理已完成的 task（非阻塞）
+            while let Some(result) = tasks.try_join_next() {
+                match result {
+                    Ok(MessageAction::Shutdown) => {
+                        tracing::debug!("Shutdown command received from task, exiting...");
+                        let _ = shutdown_tx.send(true);
+                        break;
                     }
-                }
-                Ok(Some(empty)) => {
-                    // Empty response, nothing to send (e.g. approval handled via send_status)
-                    tracing::debug!(
-                        channel = %message.channel,
-                        user = %message.user_id,
-                        empty_len = empty.len(),
-                        "Suppressed empty response (not sent to channel)"
-                    );
-                }
-                Ok(None) => {
-                    // Shutdown signal received (/quit, /exit, /shutdown)
-                    tracing::debug!("Shutdown command received, exiting...");
-                    break;
-                }
-                Err(e) => {
-                    tracing::error!("Error handling message: {}", e);
-                    if let Err(send_err) = self
-                        .channels
-                        .respond(&message, OutgoingResponse::text(format!("Error: {}", e)))
-                        .await
-                    {
-                        tracing::error!(
-                            channel = %message.channel,
-                            error = %send_err,
-                            "Failed to send error response to channel"
-                        );
+                    Err(e) if e.is_panic() => {
+                        tracing::error!("Message handler task panicked: {}", e);
                     }
+                    _ => {}
                 }
             }
+
+            // 检查是否收到 shutdown 信号
+            if *shutdown_tx.borrow() {
+                break;
+            }
         }
+
+        // 等待所有进行中的 task 完成（最多 10 秒）
+        let drain_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while let Ok(Some(_)) = tokio::time::timeout_at(drain_deadline, tasks.join_next()).await {}
 
         // Cleanup
         tracing::debug!("Agent shutting down...");
@@ -975,10 +945,79 @@ impl Agent {
         if let Some((cron_handle, _)) = routine_handle {
             cron_handle.abort();
         }
-        self.scheduler.stop_all().await;
-        self.channels.shutdown_all().await?;
+        agent.scheduler.stop_all().await;
+        agent.channels.shutdown_all().await?;
 
         Ok(())
+    }
+
+    /// 处理消息结果并发送响应。从主循环提取为独立方法，供 spawn task 调用。
+    async fn dispatch_result(
+        &self,
+        result: Result<Option<String>, Error>,
+        message: &IncomingMessage,
+    ) -> MessageAction {
+        match result {
+            Ok(Some(response)) if !response.is_empty() => {
+                // Hook: BeforeOutbound
+                let event = crate::hooks::HookEvent::Outbound {
+                    user_id: message.user_id.clone(),
+                    channel: message.channel.clone(),
+                    content: response.clone(),
+                    thread_id: message.thread_id.clone(),
+                };
+                let final_response = match self.hooks().run(&event).await {
+                    Err(err) => {
+                        tracing::warn!("BeforeOutbound hook blocked response: {}", err);
+                        return MessageAction::Continue;
+                    }
+                    Ok(crate::hooks::HookOutcome::Continue {
+                        modified: Some(new_content),
+                    }) => new_content,
+                    _ => response,
+                };
+                if let Err(e) = self
+                    .channels
+                    .respond(message, OutgoingResponse::text(final_response))
+                    .await
+                {
+                    tracing::error!(
+                        channel = %message.channel,
+                        error = %e,
+                        "Failed to send response to channel"
+                    );
+                }
+                MessageAction::Continue
+            }
+            Ok(Some(empty)) => {
+                tracing::debug!(
+                    channel = %message.channel,
+                    user = %message.user_id,
+                    empty_len = empty.len(),
+                    "Suppressed empty response (not sent to channel)"
+                );
+                MessageAction::Continue
+            }
+            Ok(None) => {
+                tracing::debug!("Shutdown command received, exiting...");
+                MessageAction::Shutdown
+            }
+            Err(e) => {
+                tracing::error!("Error handling message: {}", e);
+                if let Err(send_err) = self
+                    .channels
+                    .respond(message, OutgoingResponse::text(format!("Error: {}", e)))
+                    .await
+                {
+                    tracing::error!(
+                        channel = %message.channel,
+                        error = %send_err,
+                        "Failed to send error response to channel"
+                    );
+                }
+                MessageAction::Continue
+            }
+        }
     }
 
     /// Store extracted document text in workspace memory for future search/recall.

@@ -43,16 +43,34 @@ pub(crate) const MAX_RETRY_AFTER_SECS: u64 = 3600;
 /// See also `circuit_breaker::is_transient()` which answers a different
 /// question: "does this error indicate the backend is degraded?"
 pub(crate) fn is_retryable(err: &LlmError) -> bool {
-    matches!(
-        err,
+    match err {
+        // HTTP 5xx 服务端错误不重试：服务端故障通常不是瞬时的，
+        // 重试只会增加延迟，不会提高成功率。
+        LlmError::RequestFailed { reason, .. } | LlmError::InvalidResponse { reason, .. }
+            if is_server_error(reason) =>
+        {
+            false
+        }
         LlmError::RequestFailed { .. }
             | LlmError::RateLimited { .. }
             | LlmError::InvalidResponse { .. }
             | LlmError::EmptyResponse { .. }
             | LlmError::SessionRenewalFailed { .. }
             | LlmError::Http(_)
-            | LlmError::Io(_)
-    )
+            | LlmError::Io(_) => true,
+        _ => false,
+    }
+}
+
+/// 判断错误信息是否来自 HTTP 5xx 服务端错误。
+fn is_server_error(reason: &str) -> bool {
+    // rig-core 格式: "HttpError: Invalid status code 5XX ..."
+    // reqwest 格式: "500 Internal Server Error" 或 "status code 500"
+    reason.contains("status code 5")
+        || reason.contains("500 ")
+        || reason.contains("502 ")
+        || reason.contains("503 ")
+        || reason.contains("504 ")
 }
 
 /// Calculate exponential backoff delay with random jitter.
@@ -352,6 +370,53 @@ mod tests {
             provider: "p".into(),
             model: "m".into(),
         }));
+    }
+
+    #[test]
+    fn test_is_retryable_server_5xx_not_retryable() {
+        // HTTP 500 — 服务端错误不重试
+        assert!(!is_retryable(&LlmError::RequestFailed {
+            provider: "glm".into(),
+            reason: "HttpError: Invalid status code 500 Internal Server Error".into(),
+        }));
+        // HTTP 502
+        assert!(!is_retryable(&LlmError::RequestFailed {
+            provider: "p".into(),
+            reason: "502 Bad Gateway".into(),
+        }));
+        // HTTP 503
+        assert!(!is_retryable(&LlmError::InvalidResponse {
+            provider: "p".into(),
+            reason: "status code 503 Service Unavailable".into(),
+        }));
+        // HTTP 504
+        assert!(!is_retryable(&LlmError::RequestFailed {
+            provider: "p".into(),
+            reason: "504 Gateway Timeout".into(),
+        }));
+        // 非 5xx 的 RequestFailed 仍然可重试
+        assert!(is_retryable(&LlmError::RequestFailed {
+            provider: "p".into(),
+            reason: "connection reset".into(),
+        }));
+        // 非 5xx 的 InvalidResponse 仍然可重试
+        assert!(is_retryable(&LlmError::InvalidResponse {
+            provider: "p".into(),
+            reason: "unexpected EOF".into(),
+        }));
+    }
+
+    #[test]
+    fn test_is_server_error_detection() {
+        assert!(is_server_error("HttpError: Invalid status code 500 Internal Server Error"));
+        assert!(is_server_error("502 Bad Gateway"));
+        assert!(is_server_error("status code 503 Service Unavailable"));
+        assert!(is_server_error("504 Gateway Timeout"));
+        // 非 5xx
+        assert!(!is_server_error("connection reset"));
+        assert!(!is_server_error("status code 429 Too Many Requests"));
+        assert!(!is_server_error("timeout"));
+        assert!(!is_server_error(""));
     }
 
     // -- RetryProvider tests --

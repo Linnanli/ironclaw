@@ -37,7 +37,7 @@ use crate::llm::provider::{
 /// Adapter that wraps a rig-core `CompletionModel` and implements `LlmProvider`.
 pub struct RigAdapter<M: CompletionModel> {
     /// tokio RwLock so the guard is Send and can be held across await points.
-    model: tokio::sync::RwLock<M>,
+    model: std::sync::RwLock<Arc<M>>,
     /// 初始模型名（不变，用于 model_name() 返回 &str）。
     initial_model_name: String,
     /// 当前活跃模型名（可变，set_model 后更新）。
@@ -59,7 +59,7 @@ impl<M: CompletionModel> RigAdapter<M> {
         let (input_cost, output_cost) =
             costs::model_cost(&name).unwrap_or_else(costs::default_cost);
         Self {
-            model: tokio::sync::RwLock::new(model),
+            model: std::sync::RwLock::new(Arc::new(model)),
             initial_model_name: name.clone(),
             active_model: std::sync::RwLock::new(name),
             input_cost,
@@ -726,7 +726,7 @@ where
 
         inject_model_override(&mut rig_req, model_override.as_deref());
 
-        let model = self.model.read().await;
+        let model = self.model.read().expect("model lock poisoned").clone();
         let response = model
             .completion(rig_req)
             .await
@@ -788,14 +788,37 @@ where
 
         inject_model_override(&mut rig_req, model_override.as_deref());
 
-        let model = self.model.read().await;
+        tracing::info!(
+            provider_model = %self.current_model_name(),
+            model_override = ?model_override,
+            msg_count = messages.len(),
+            tool_count = request.tools.len(),
+            "LLM complete_with_tools: sending request"
+        );
+
+        let model = self.model.read().expect("model lock poisoned").clone();
         let response = model
             .completion(rig_req)
             .await
-            .map_err(|e| LlmError::RequestFailed {
-                provider: self.current_model_name(),
-                reason: e.to_string(),
+            .map_err(|e| {
+                tracing::error!(
+                    provider_model = %self.current_model_name(),
+                    model_override = ?model_override,
+                    error = %e,
+                    "LLM complete_with_tools: request failed"
+                );
+                LlmError::RequestFailed {
+                    provider: self.current_model_name(),
+                    reason: e.to_string(),
+                }
             })?;
+
+        tracing::info!(
+            provider_model = %self.current_model_name(),
+            input_tokens = response.usage.input_tokens,
+            output_tokens = response.usage.output_tokens,
+            "LLM complete_with_tools: response received"
+        );
 
         let (text, mut tool_calls, finish) = extract_response(&response.choice, &response.usage);
 
@@ -845,8 +868,8 @@ where
 
     fn set_model(&self, model: &str) -> Result<(), LlmError> {
         if let Some(ref factory) = self.model_factory {
-            let new_model = factory(model);
-            *self.model.blocking_write() = new_model;
+            let new_model = Arc::new(factory(model));
+            *self.model.write().expect("model lock poisoned") = new_model;
             *self.active_model.write().expect("active_model lock poisoned") = model.to_string();
             tracing::debug!(model = %model, "RigAdapter model switched via factory");
             Ok(())
