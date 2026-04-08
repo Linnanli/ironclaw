@@ -618,9 +618,18 @@ impl Agent {
                 })
             }
             Err(e) => {
-                thread.fail_turn(e.to_string());
-                // User message already persisted at turn start; nothing else to save
-                Ok(SubmissionResult::error(e.to_string()))
+                let error_text = e.to_string();
+                thread.fail_turn(error_text.clone());
+                // Persist the error as an assistant message so it survives page refresh
+                drop(sess);
+                self.persist_assistant_response(
+                    thread_id,
+                    &message.channel,
+                    &message.user_id,
+                    &format!("Error: {error_text}"),
+                )
+                .await;
+                Ok(SubmissionResult::error(error_text))
             }
         }
     }
@@ -1050,6 +1059,7 @@ impl Agent {
                     .with_requester_id(&message.sender_id);
             job_ctx.http_interceptor = self.deps.http_interceptor.clone();
             job_ctx.metadata = crate::agent::agent_loop::chat_tool_execution_metadata(message);
+            job_ctx.conversation_id = Some(thread_id);
             // Prefer a valid timezone from the approval message, fall back to the
             // resolved timezone stored when the approval was originally requested.
             let tz_candidate = message

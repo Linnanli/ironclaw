@@ -308,8 +308,14 @@ impl CreateJobTool {
         if let Some(ref slot) = self.scheduler_slot
             && let Some(ref scheduler) = *slot.read().await
         {
+            // Pass the originating conversation_id via metadata so the new job
+            // can link back to it for frontend navigation.
+            let metadata = ctx.conversation_id.map(|conv_id| {
+                serde_json::json!({ "__conversation_id": conv_id.to_string() })
+            });
+
             return match scheduler
-                .dispatch_job(&ctx.user_id, title, description, None)
+                .dispatch_job(&ctx.user_id, title, description, metadata)
                 .await
             {
                 Ok(job_id) => {
@@ -317,7 +323,13 @@ impl CreateJobTool {
                         "job_id": job_id.to_string(),
                         "title": title,
                         "status": "in_progress",
-                        "message": format!("Created and scheduled job '{}'", title)
+                        "message": format!(
+                            "Background job '{}' created and running independently. \
+                             Do NOT poll job_status or job_events — the result will be \
+                             delivered automatically when the job completes. \
+                             Simply inform the user that the job has been created.",
+                            title
+                        )
                     });
                     Ok(ToolOutput::success(result, start.elapsed()))
                 }

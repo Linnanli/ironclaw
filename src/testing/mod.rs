@@ -559,6 +559,8 @@ impl TestHarnessBuilder {
             hooks,
             cost_guard,
             sse_tx: None,
+            job_event_sink: None,
+            channels: None,
             http_interceptor: None,
             transcription: None,
             document_extraction: None,

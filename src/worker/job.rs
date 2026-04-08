@@ -55,6 +55,24 @@ pub struct WorkerDeps {
     pub use_planning: bool,
     /// Broadcast sender for live job event streaming to the web gateway.
     pub sse_tx: Option<Arc<crate::channels::web::sse::SseManager>>,
+    /// Additional job event sink for non-SSE transports (e.g. Tauri IPC in the desktop client).
+    ///
+    /// When set, `log_event` broadcasts to this sink in addition to `sse_tx`.
+    /// This field is intentionally separate from `sse_tx` to avoid merge conflicts
+    /// with the ironclaw main branch.
+    ///
+    /// TODO: Once ironclaw stabilizes, replace `sse_tx: Option<Arc<SseManager>>` with
+    /// `sse_tx: Option<Arc<dyn JobEventSink>>` and remove this field. `SseManager` already
+    /// implements `JobEventSink`, so the migration is mechanical: change the field type and
+    /// add `as Arc<dyn JobEventSink>` at the call sites in `main.rs`.
+    pub job_event_sink: Option<Arc<dyn crate::worker::JobEventSink>>,
+    /// Channel manager for broadcasting job completion results to the originating conversation.
+    ///
+    /// When set, `mark_completed` broadcasts the final response text back to the conversation
+    /// thread that created the job, so users see the result without polling.
+    ///
+    /// TODO: Same as `job_event_sink` — consolidate with `sse_tx` once ironclaw stabilizes.
+    pub channels: Option<Arc<crate::channels::ChannelManager>>,
     /// Approval context for tool execution. When `None`, all non-`Never` tools are
     /// blocked (legacy behavior). When `Some`, the context determines which tools
     /// are pre-approved for autonomous execution.
@@ -223,6 +241,11 @@ impl Worker {
             if let Some(event) = event {
                 sse.broadcast(event);
             }
+        }
+
+        // Broadcast to additional sink (e.g. Tauri IPC for desktop client)
+        if let Some(ref sink) = self.deps.job_event_sink {
+            sink.send_job_event(job_id, event_type, &data);
         }
     }
 
@@ -949,6 +972,7 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
         if crate::util::llm_signals_completion(&response) {
             reason_ctx.messages.push(ChatMessage::assistant(&response));
             self.mark_completed().await?;
+            self.broadcast_result(&response);
         } else {
             // Replace the completion-check exchange with an action-oriented
             // continuation prompt. Leaving the "Is the job complete?" / "No"
@@ -1010,6 +1034,67 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
             Some("Job completed successfully".to_string()),
         );
         Ok(())
+    }
+
+    /// Broadcast the final job result to the originating conversation thread.
+    ///
+    /// Called after `mark_completed` when the Worker has a substantive text response.
+    /// Uses `ChannelManager.broadcast_all` so the result appears in the chat UI
+    /// without the user needing to poll for status.
+    fn broadcast_result(&self, content: &str) {
+        let Some(ref channels) = self.deps.channels else {
+            return;
+        };
+
+        let job_id = self.job_id;
+        let channels = Arc::clone(channels);
+        let content = content.to_string();
+        let context_manager = self.context_manager().clone();
+        let store = self.deps.store.clone();
+
+        tokio::spawn(Self::do_broadcast_result(job_id, channels, content, context_manager, store));
+    }
+
+    async fn do_broadcast_result(
+        job_id: uuid::Uuid,
+        channels: Arc<crate::channels::ChannelManager>,
+        content: String,
+        context_manager: Arc<crate::context::ContextManager>,
+        store: Option<crate::tenant::AdminScope>,
+    ) {
+        let ctx = match context_manager.get_context(job_id).await {
+            Ok(ctx) => ctx,
+            Err(e) => {
+                tracing::warn!(job_id = %job_id, "broadcast_result: failed to get context: {e}");
+                return;
+            }
+        };
+
+        let Some(conv_id) = ctx.conversation_id else {
+            tracing::debug!(job_id = %job_id, "broadcast_result: no conversation_id, skipping");
+            return;
+        };
+
+        // Persist to DB so the message survives page refresh
+        if let Some(ref s) = store {
+            if let Err(e) = s.add_conversation_message(conv_id, "assistant", &content).await {
+                tracing::warn!(job_id = %job_id, "broadcast_result: failed to persist message: {e}");
+            }
+        }
+
+        let response = crate::channels::OutgoingResponse {
+            content,
+            thread_id: Some(conv_id.to_string()),
+            attachments: Vec::new(),
+            metadata: serde_json::json!({}),
+        };
+
+        let results = channels.broadcast_all(&ctx.user_id, response).await;
+        for (name, result) in results {
+            if let Err(e) = result {
+                tracing::warn!(job_id = %job_id, channel = %name, "broadcast_result failed: {e}");
+            }
+        }
     }
 
     async fn mark_failed(&self, reason: &str) -> Result<(), Error> {
@@ -1523,6 +1608,9 @@ impl<'a> LoopDelegate for JobDelegate<'a> {
             );
         }
 
+        // Broadcast the final result to the originating conversation thread
+        self.worker.broadcast_result(&text);
+
         // Track that a substantive response has been produced.
         self.has_text_response
             .store(true, std::sync::atomic::Ordering::Relaxed);
@@ -1797,6 +1885,8 @@ mod tests {
             timeout: Duration::from_secs(30),
             use_planning: false,
             sse_tx: None,
+            job_event_sink: None,
+            channels: None,
             approval_context: None,
             http_interceptor: None,
         };
@@ -2016,6 +2106,8 @@ mod tests {
             timeout: Duration::from_secs(30),
             use_planning: false,
             sse_tx: None,
+            job_event_sink: None,
+            channels: None,
             approval_context,
             http_interceptor: None,
         };

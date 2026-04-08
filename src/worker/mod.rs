@@ -37,6 +37,18 @@ pub use container::WorkerRuntime;
 pub use job::{Worker, WorkerDeps};
 pub use proxy_llm::ProxyLlmProvider;
 
+/// Sink for job lifecycle events (status changes, tool results, completion).
+///
+/// Worker 通过此 trait 广播事件，不关心传输层实现。
+/// - Web Gateway: `SseManager` 实现，转为 `AppEvent` 推送到 HTTP/SSE 客户端
+/// - Desktop Client: `TauriJobEventSink` 实现，转为 `ChatEvent` 推送到 Tauri IPC
+pub trait JobEventSink: Send + Sync {
+    /// 广播一个 job 事件。
+    ///
+    /// `event_type` 取值：`"message"` | `"tool_use"` | `"tool_result"` | `"status"` | `"result"` | `"reasoning"`
+    fn send_job_event(&self, job_id: uuid::Uuid, event_type: &str, data: &serde_json::Value);
+}
+
 /// Run the Worker subcommand (inside Docker containers).
 pub async fn run_worker(
     job_id: uuid::Uuid,

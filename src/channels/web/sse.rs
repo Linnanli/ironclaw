@@ -235,6 +235,56 @@ impl<S> Drop for CountedStream<S> {
     }
 }
 
+// ── JobEventSink 实现 ─────────────────────────────────────────────────
+
+impl crate::worker::JobEventSink for SseManager {
+    fn send_job_event(&self, job_id: uuid::Uuid, event_type: &str, data: &serde_json::Value) {
+        use crate::channels::web::types::{AppEvent, ToolDecisionDto};
+
+        let job_id_str = job_id.to_string();
+        let event = match event_type {
+            "message" => Some(AppEvent::JobMessage {
+                job_id: job_id_str,
+                role: data.get("role").and_then(|v| v.as_str()).unwrap_or("assistant").to_string(),
+                content: data.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            }),
+            "tool_use" => Some(AppEvent::JobToolUse {
+                job_id: job_id_str,
+                tool_name: data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+                input: data.get("input").cloned().unwrap_or(serde_json::Value::Null),
+            }),
+            "tool_result" => Some(AppEvent::JobToolResult {
+                job_id: job_id_str,
+                tool_name: data.get("tool_name").and_then(|v| v.as_str()).unwrap_or("unknown").to_string(),
+                output: data.get("output").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            }),
+            "status" => Some(AppEvent::JobStatus {
+                job_id: job_id_str,
+                message: data.get("message").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            }),
+            "result" => Some(AppEvent::JobResult {
+                job_id: job_id_str,
+                status: data.get("status").and_then(|v| v.as_str()).unwrap_or("completed").to_string(),
+                session_id: data.get("session_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                fallback_deliverable: data.get("fallback_deliverable").cloned(),
+            }),
+            "reasoning" => {
+                let narrative = data.get("narrative").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let decisions = ToolDecisionDto::from_json_array(&data["decisions"]);
+                Some(AppEvent::JobReasoning {
+                    job_id: job_id_str,
+                    narrative,
+                    decisions,
+                })
+            }
+            _ => None,
+        };
+        if let Some(event) = event {
+            self.broadcast(event);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

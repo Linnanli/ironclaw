@@ -68,6 +68,10 @@ pub struct Scheduler {
     hooks: Arc<HookRegistry>,
     /// SSE manager for live job event streaming.
     sse_tx: Option<Arc<crate::channels::web::sse::SseManager>>,
+    /// Additional job event sink for non-SSE transports (e.g. Tauri IPC).
+    job_event_sink: Option<Arc<dyn crate::worker::JobEventSink>>,
+    /// Channel manager for broadcasting job completion results to conversations.
+    channels: Option<Arc<crate::channels::ChannelManager>>,
     /// HTTP interceptor for trace recording/replay (propagated to workers).
     http_interceptor: Option<Arc<dyn crate::llm::recording::HttpInterceptor>>,
     /// Running jobs (main LLM-driven jobs).
@@ -95,6 +99,8 @@ impl Scheduler {
             store: deps.store,
             hooks: deps.hooks,
             sse_tx: None,
+            job_event_sink: None,
+            channels: None,
             http_interceptor: None,
             jobs: Arc::new(RwLock::new(HashMap::new())),
             subtasks: Arc::new(RwLock::new(HashMap::new())),
@@ -104,6 +110,16 @@ impl Scheduler {
     /// Set the SSE manager for live job event streaming.
     pub fn set_sse_sender(&mut self, sse: Arc<crate::channels::web::sse::SseManager>) {
         self.sse_tx = Some(sse);
+    }
+
+    /// Set an additional job event sink for non-SSE transports (e.g. Tauri IPC).
+    pub fn set_job_event_sink(&mut self, sink: Arc<dyn crate::worker::JobEventSink>) {
+        self.job_event_sink = Some(sink);
+    }
+
+    /// Set the channel manager for broadcasting job completion results to conversations.
+    pub fn set_channels(&mut self, channels: Arc<crate::channels::ChannelManager>) {
+        self.channels = Some(channels);
     }
 
     /// Set the HTTP interceptor for trace recording/replay.
@@ -203,7 +219,18 @@ impl Scheduler {
         let ctx = if let Some(meta) = metadata {
             self.context_manager
                 .update_context_and_get(job_id, |ctx| {
-                    ctx.metadata = meta;
+                    // Extract __conversation_id before storing metadata so it
+                    // doesn't pollute the LLM context with internal routing data.
+                    if let Some(conv_id_str) = meta.get("__conversation_id").and_then(|v| v.as_str()) {
+                        if let Ok(conv_id) = conv_id_str.parse::<uuid::Uuid>() {
+                            ctx.conversation_id = Some(conv_id);
+                        }
+                    }
+                    let mut clean_meta = meta.clone();
+                    if let Some(obj) = clean_meta.as_object_mut() {
+                        obj.remove("__conversation_id");
+                    }
+                    ctx.metadata = clean_meta;
                     if max_tokens > 0 {
                         ctx.max_tokens = max_tokens;
                     }
@@ -309,6 +336,8 @@ impl Scheduler {
                 timeout: self.config.job_timeout,
                 use_planning: self.config.use_planning,
                 sse_tx: self.sse_tx.clone(),
+                job_event_sink: self.job_event_sink.clone(),
+                channels: self.channels.clone(),
                 approval_context,
                 http_interceptor: self.http_interceptor.clone(),
             };

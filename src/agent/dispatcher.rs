@@ -151,6 +151,10 @@ impl Agent {
         job_ctx.http_interceptor = self.deps.http_interceptor.clone();
         job_ctx.user_timezone = user_tz.name().to_string();
         job_ctx.metadata = crate::agent::agent_loop::chat_tool_execution_metadata(message);
+        // Link the job context to the current conversation so that tools like
+        // CreateJobTool can pass the conversation_id to spawned background jobs,
+        // enabling the frontend to navigate back to this thread when the job completes.
+        job_ctx.conversation_id = Some(thread_id);
 
         // Build system prompts once for this turn. Two variants: with tools
         // (normal iterations) and without (force_text final iteration).
@@ -1371,6 +1375,8 @@ mod tests {
             hooks: Arc::new(HookRegistry::new()),
             cost_guard: Arc::new(CostGuard::new(CostGuardConfig::default())),
             sse_tx: None,
+            job_event_sink: None,
+            channels: None,
             http_interceptor: None,
             transcription: None,
             document_extraction: None,
@@ -2253,6 +2259,8 @@ mod tests {
             hooks: Arc::new(HookRegistry::new()),
             cost_guard: Arc::new(CostGuard::new(CostGuardConfig::default())),
             sse_tx: None,
+            job_event_sink: None,
+            channels: None,
             http_interceptor: None,
             transcription: None,
             document_extraction: None,
@@ -2381,6 +2389,8 @@ mod tests {
                 hooks: Arc::new(HookRegistry::new()),
                 cost_guard: Arc::new(CostGuard::new(CostGuardConfig::default())),
                 sse_tx: None,
+                job_event_sink: None,
+                channels: None,
                 http_interceptor: None,
                 transcription: None,
                 document_extraction: None,

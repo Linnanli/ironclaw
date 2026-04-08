@@ -922,6 +922,8 @@ async fn async_main() -> anyhow::Result<()> {
         hooks: components.hooks,
         cost_guard: components.cost_guard,
         sse_tx: sse_manager,
+        job_event_sink: None,
+        channels_for_jobs: None,
         http_interceptor,
         transcription: config.transcription.create_provider().map(|p| {
             Arc::new(ironclaw::llm::transcription::TranscriptionMiddleware::new(

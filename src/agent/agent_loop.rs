@@ -175,6 +175,13 @@ pub struct AgentDeps {
     pub cost_guard: Arc<crate::agent::cost_guard::CostGuard>,
     /// SSE manager for live job event streaming to the web gateway.
     pub sse_tx: Option<Arc<crate::channels::web::sse::SseManager>>,
+    /// Additional job event sink for non-SSE transports (e.g. Tauri IPC in the desktop client).
+    pub job_event_sink: Option<Arc<dyn crate::worker::JobEventSink>>,
+    /// Channel manager for broadcasting job completion results to conversations.
+    ///
+    /// Passed through to Worker so completed jobs can push their final response
+    /// back to the originating conversation thread.
+    pub channels_for_jobs: Option<Arc<crate::channels::ChannelManager>>,
     /// HTTP interceptor for trace recording/replay.
     pub http_interceptor: Option<Arc<dyn crate::llm::recording::HttpInterceptor>>,
     /// Audio transcription middleware for voice messages.
@@ -261,6 +268,12 @@ impl Agent {
         );
         if let Some(ref sse) = deps.sse_tx {
             scheduler.set_sse_sender(Arc::clone(sse));
+        }
+        if let Some(ref sink) = deps.job_event_sink {
+            scheduler.set_job_event_sink(Arc::clone(sink));
+        }
+        if let Some(ref ch) = deps.channels_for_jobs {
+            scheduler.set_channels(Arc::clone(ch));
         }
         if let Some(ref interceptor) = deps.http_interceptor {
             scheduler.set_http_interceptor(Arc::clone(interceptor));
