@@ -20,7 +20,7 @@ use crate::agent::session::ThreadState;
 use crate::agent::session_manager::SessionManager;
 use crate::agent::submission::{Submission, SubmissionParser, SubmissionResult};
 use crate::agent::{HeartbeatConfig as AgentHeartbeatConfig, Router, Scheduler, SchedulerDeps};
-use crate::channels::{ChannelManager, IncomingMessage, OutgoingResponse};
+use crate::channels::{ChannelManager, IncomingMessage, OutgoingResponse, StatusUpdate};
 use crate::config::{AgentConfig, HeartbeatConfig, RoutineConfig, SkillsConfig};
 use crate::context::ContextManager;
 use crate::db::Database;
@@ -1316,11 +1316,66 @@ impl Agent {
                     fired,
                     "Consumed inbound user message with matching event-triggered routine(s)"
                 );
-                return if single_message_repl {
-                    Ok(None)
-                } else {
-                    Ok(Some(String::new()))
-                };
+                // Desktop (tauri): emit a lightweight UI hint so frontend can
+                // show "event routine triggered" under the current user bubble.
+                if message.channel == "tauri" {
+                    let metadata = serde_json::json!({
+                        "routine_triggered": true,
+                        "thread_id": message.thread_id.clone(),
+                        "fired": fired,
+                    });
+                    if let Err(err) = self
+                        .channels
+                        .send_status(
+                            "tauri",
+                            StatusUpdate::Status("routine_triggered".to_string()),
+                            &metadata,
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            channel = %message.channel,
+                            user = %message.user_id,
+                            error = %err,
+                            "Failed to emit routine_triggered status to tauri"
+                        );
+                    }
+
+                    if let Some(thread_str) = message.thread_id.as_deref()
+                        && let Ok(tid) = uuid::Uuid::parse_str(thread_str)
+                    {
+                        let payload = serde_json::json!({
+                            "kind": "ui_event",
+                            "event": "routine_triggered",
+                            "fired": fired,
+                        });
+                        self.persist_ui_event_message(
+                            tid,
+                            &message.channel,
+                            &message.user_id,
+                            &payload,
+                        )
+                        .await;
+                    }
+                }
+
+                // Keep REPL single-message semantics unchanged.
+                if single_message_repl {
+                    // REPL single-message mode still consumes the input once it
+                    // matched event-trigger routines, so persist explicitly.
+                    if let Some(thread_str) = message.thread_id.as_deref()
+                        && let Ok(tid) = uuid::Uuid::parse_str(thread_str)
+                    {
+                        self.persist_user_message(
+                            tid,
+                            &message.channel,
+                            &message.user_id,
+                            content,
+                        )
+                        .await;
+                    }
+                    return Ok(None);
+                }
             }
         }
 

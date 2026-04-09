@@ -445,6 +445,16 @@ impl Agent {
         )
         .await;
 
+        if let Some(stats) = message.metadata.get("dlp_redacted_stats") {
+            self.persist_dlp_redacted_ui_event(
+                thread_id,
+                &message.channel,
+                &message.user_id,
+                stats,
+            )
+            .await;
+        }
+
         tracing::debug!(
             message_id = %message.id,
             thread_id = %thread_id,
@@ -609,6 +619,15 @@ impl Agent {
                         &message.metadata,
                     )
                     .await;
+                self.persist_approval_needed_ui_event(
+                    thread_id,
+                    &message.channel,
+                    &message.user_id,
+                    request_id,
+                    &tool_name,
+                    &description,
+                )
+                .await;
                 Ok(SubmissionResult::NeedApproval {
                     request_id,
                     tool_name,
@@ -698,6 +717,109 @@ impl Agent {
         {
             tracing::warn!("Failed to persist user message: {}", e);
         }
+    }
+
+    /// Persist a lightweight UI event as a system message so frontend state
+    /// can be reconstructed after page refresh.
+    pub(super) async fn persist_ui_event_message(
+        &self,
+        thread_id: Uuid,
+        channel: &str,
+        user_id: &str,
+        payload: &serde_json::Value,
+    ) {
+        let store = match self.store() {
+            Some(s) => Arc::clone(s),
+            None => return,
+        };
+
+        if !self
+            .ensure_writable_conversation(&store, thread_id, channel, user_id)
+            .await
+        {
+            return;
+        }
+
+        let content = match serde_json::to_string(payload) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!("Failed to serialize ui event message payload: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = store
+            .add_conversation_message(thread_id, "system", &content)
+            .await
+        {
+            tracing::warn!("Failed to persist ui event message: {}", e);
+        }
+    }
+
+    /// Persist "message was DLP-redacted" UI marker for desktop chat.
+    pub(super) async fn persist_dlp_redacted_ui_event(
+        &self,
+        thread_id: Uuid,
+        channel: &str,
+        user_id: &str,
+        stats: &serde_json::Value,
+    ) {
+        if channel != "tauri" {
+            return;
+        }
+        let payload = serde_json::json!({
+            "kind": "ui_event",
+            "event": "dlp_redacted",
+            "stats": stats,
+        });
+        self.persist_ui_event_message(thread_id, channel, user_id, &payload)
+            .await;
+    }
+
+    /// Persist "approval needed" UI marker for desktop chat.
+    pub(super) async fn persist_approval_needed_ui_event(
+        &self,
+        thread_id: Uuid,
+        channel: &str,
+        user_id: &str,
+        request_id: Uuid,
+        tool_name: &str,
+        description: &str,
+    ) {
+        if channel != "tauri" {
+            return;
+        }
+        let payload = serde_json::json!({
+            "kind": "ui_event",
+            "event": "approval_needed",
+            "request_id": request_id.to_string(),
+            "tool_name": tool_name,
+            "description": description,
+        });
+        self.persist_ui_event_message(thread_id, channel, user_id, &payload)
+            .await;
+    }
+
+    /// Persist "approval resolved" UI marker for desktop chat.
+    pub(super) async fn persist_approval_resolved_ui_event(
+        &self,
+        thread_id: Uuid,
+        channel: &str,
+        user_id: &str,
+        request_id: Uuid,
+        approved: bool,
+    ) {
+        if channel != "tauri" {
+            return;
+        }
+        let payload = serde_json::json!({
+            "kind": "ui_event",
+            "event": "approval_resolved",
+            "request_id": request_id.to_string(),
+            "approved": approved,
+        });
+        self.persist_ui_event_message(thread_id, channel, user_id, &payload)
+            .await;
     }
 
     /// Persist the assistant response to the DB after the agentic loop completes.
@@ -1034,6 +1156,15 @@ impl Agent {
         }
 
         if approved {
+            self.persist_approval_resolved_ui_event(
+                thread_id,
+                &message.channel,
+                &message.user_id,
+                pending.request_id,
+                true,
+            )
+            .await;
+
             // If always, add to auto-approved set
             if always {
                 let mut sess = session.lock().await;
@@ -1472,6 +1603,15 @@ impl Agent {
                         &message.metadata,
                     )
                     .await;
+                self.persist_approval_needed_ui_event(
+                    thread_id,
+                    &message.channel,
+                    &message.user_id,
+                    request_id,
+                    &tool_name,
+                    &description,
+                )
+                .await;
 
                 return Ok(SubmissionResult::NeedApproval {
                     request_id,
@@ -1570,6 +1710,15 @@ impl Agent {
                             &message.metadata,
                         )
                         .await;
+                    self.persist_approval_needed_ui_event(
+                        thread_id,
+                        &message.channel,
+                        &message.user_id,
+                        request_id,
+                        &tool_name,
+                        &description,
+                    )
+                    .await;
                     Ok(SubmissionResult::NeedApproval {
                         request_id,
                         tool_name,
@@ -1586,6 +1735,15 @@ impl Agent {
             }
         } else {
             // Rejected - complete the turn with a rejection message and persist
+            self.persist_approval_resolved_ui_event(
+                thread_id,
+                &message.channel,
+                &message.user_id,
+                pending.request_id,
+                false,
+            )
+            .await;
+
             let rejection = format!(
                 "Tool '{}' was rejected. The agent will not execute this tool.\n\n\
                  You can continue the conversation or try a different approach.",
