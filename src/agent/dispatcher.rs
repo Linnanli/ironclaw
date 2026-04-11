@@ -22,6 +22,42 @@ use crate::agent::agentic_loop::{
 use crate::llm::{ChatMessage, Reasoning, ReasoningContext};
 use crate::tools::redact_params;
 
+fn disabled_names_from_metadata(
+    message: &IncomingMessage,
+    key: &str,
+) -> std::collections::HashSet<String> {
+    message
+        .metadata
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn filter_tools_by_disabled_extensions(
+    tools: Vec<crate::llm::ToolDefinition>,
+    disabled_extensions: &std::collections::HashSet<String>,
+) -> Vec<crate::llm::ToolDefinition> {
+    if disabled_extensions.is_empty() {
+        return tools;
+    }
+
+    tools
+        .into_iter()
+        .filter(|tool| {
+            !disabled_extensions
+                .iter()
+                .any(|ext| tool.name.starts_with(&format!("{}_", ext)))
+        })
+        .collect()
+}
+
 /// Result of the agentic loop execution.
 pub(super) enum AgenticLoopResult {
     /// Completed with a response.
@@ -85,7 +121,18 @@ impl Agent {
         };
 
         // Select and prepare active skills (if skills system is enabled)
-        let active_skills = self.select_active_skills(&message.content);
+        let (disabled_skills, disabled_extensions) = if message.channel == "tauri" {
+            (
+                disabled_names_from_metadata(message, "disabled_skills"),
+                disabled_names_from_metadata(message, "disabled_extensions"),
+            )
+        } else {
+            (
+                std::collections::HashSet::new(),
+                std::collections::HashSet::new(),
+            )
+        };
+        let active_skills = self.select_active_skills(&message.content, &disabled_skills);
 
         // Build skill context block
         let skill_context = if !active_skills.is_empty() {
@@ -159,6 +206,8 @@ impl Agent {
         // Build system prompts once for this turn. Two variants: with tools
         // (normal iterations) and without (force_text final iteration).
         let initial_tool_defs = self.tools().tool_definitions().await;
+        let initial_tool_defs =
+            filter_tools_by_disabled_extensions(initial_tool_defs, &disabled_extensions);
         let initial_tool_defs = if !active_skills.is_empty() {
             crate::skills::attenuate_tools(&initial_tool_defs, &active_skills).tools
         } else {
@@ -1305,12 +1354,14 @@ mod tests {
     use crate::hooks::HookRegistry;
     use crate::llm::{
         CompletionRequest, CompletionResponse, FinishReason, LlmProvider, ToolCall,
-        ToolCompletionRequest, ToolCompletionResponse,
+        ToolCompletionRequest, ToolCompletionResponse, ToolDefinition,
     };
     use crate::safety::SafetyLayer;
     use crate::tools::ToolRegistry;
 
-    use super::check_auth_required;
+    use super::{
+        check_auth_required, disabled_names_from_metadata, filter_tools_by_disabled_extensions,
+    };
 
     /// Minimal LLM provider for unit tests that always returns a static response.
     struct StaticLlmProvider;
@@ -1376,7 +1427,7 @@ mod tests {
             cost_guard: Arc::new(CostGuard::new(CostGuardConfig::default())),
             sse_tx: None,
             job_event_sink: None,
-            channels: None,
+            channels_for_jobs: None,
             http_interceptor: None,
             transcription: None,
             document_extraction: None,
@@ -1423,6 +1474,49 @@ mod tests {
     fn test_make_test_agent_succeeds() {
         // Verify that a test agent can be constructed without panicking.
         let _agent = make_test_agent();
+    }
+
+    #[test]
+    fn test_disabled_names_from_metadata_parses_string_array() {
+        let mut message = crate::channels::IncomingMessage::new("tauri", "user", "hello");
+        message.metadata = serde_json::json!({
+            "disabled_skills": ["alpha", "beta", 123],
+        });
+
+        let disabled = disabled_names_from_metadata(&message, "disabled_skills");
+        assert_eq!(disabled.len(), 2);
+        assert!(disabled.contains("alpha"));
+        assert!(disabled.contains("beta"));
+    }
+
+    #[test]
+    fn test_filter_tools_by_disabled_extensions_removes_prefixed_tools() {
+        let tools = vec![
+            ToolDefinition {
+                name: "github_create_issue".to_string(),
+                description: "github".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "calendar_list".to_string(),
+                description: "calendar".to_string(),
+                parameters: serde_json::json!({}),
+            },
+            ToolDefinition {
+                name: "shell".to_string(),
+                description: "builtin".to_string(),
+                parameters: serde_json::json!({}),
+            },
+        ];
+
+        let disabled: std::collections::HashSet<String> =
+            ["github".to_string()].into_iter().collect();
+        let filtered = filter_tools_by_disabled_extensions(tools, &disabled);
+
+        let names: Vec<String> = filtered.iter().map(|tool| tool.name.clone()).collect();
+        assert!(!names.contains(&"github_create_issue".to_string()));
+        assert!(names.contains(&"calendar_list".to_string()));
+        assert!(names.contains(&"shell".to_string()));
     }
 
     #[test]
@@ -2260,7 +2354,7 @@ mod tests {
             cost_guard: Arc::new(CostGuard::new(CostGuardConfig::default())),
             sse_tx: None,
             job_event_sink: None,
-            channels: None,
+            channels_for_jobs: None,
             http_interceptor: None,
             transcription: None,
             document_extraction: None,
@@ -2390,7 +2484,7 @@ mod tests {
                 cost_guard: Arc::new(CostGuard::new(CostGuardConfig::default())),
                 sse_tx: None,
                 job_event_sink: None,
-                channels: None,
+                channels_for_jobs: None,
                 http_interceptor: None,
                 transcription: None,
                 document_extraction: None,

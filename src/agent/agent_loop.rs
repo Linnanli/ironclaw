@@ -417,6 +417,7 @@ impl Agent {
     pub(super) fn select_active_skills(
         &self,
         message_content: &str,
+        disabled_skills: &std::collections::HashSet<String>,
     ) -> Vec<crate::skills::LoadedSkill> {
         if let Some(registry) = self.skill_registry() {
             let guard = match registry.read() {
@@ -426,11 +427,20 @@ impl Agent {
                     return vec![];
                 }
             };
-            let available = guard.skills();
+            let available: Vec<crate::skills::LoadedSkill> = guard
+                .skills()
+                .iter()
+                .filter(|skill| !disabled_skills.contains(skill.name()))
+                .cloned()
+                .collect();
+            if available.is_empty() {
+                return vec![];
+            }
+
             let skills_cfg = &self.deps.skills_config;
             let selected = crate::skills::prefilter_skills(
                 message_content,
-                available,
+                &available,
                 skills_cfg.max_active_skills,
                 skills_cfg.max_context_tokens,
             );
