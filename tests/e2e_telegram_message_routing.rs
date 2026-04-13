@@ -195,6 +195,8 @@ mod tests {
             hooks: components.hooks.clone(),
             cost_guard: components.cost_guard.clone(),
             sse_tx: None,
+            job_event_sink: None,
+            channels_for_jobs: None,
             http_interceptor: None,
             transcription: None,
             document_extraction: None,

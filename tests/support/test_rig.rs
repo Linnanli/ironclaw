@@ -811,6 +811,8 @@ impl TestRigBuilder {
             hooks: components.hooks,
             cost_guard: components.cost_guard,
             sse_tx: None,
+            job_event_sink: None,
+            channels_for_jobs: None,
             http_interceptor,
             transcription: None,
             document_extraction: None,

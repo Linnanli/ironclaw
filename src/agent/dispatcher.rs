@@ -3,6 +3,7 @@
 //! Extracted from `agent_loop.rs` to keep the core agentic tool execution
 //! loop (LLM call -> tool calls -> repeat) in its own focused module.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use tokio::sync::Mutex;
@@ -25,7 +26,7 @@ use crate::tools::redact_params;
 fn disabled_names_from_metadata(
     message: &IncomingMessage,
     key: &str,
-) -> std::collections::HashSet<String> {
+) -> HashSet<String> {
     message
         .metadata
         .get(key)
@@ -42,7 +43,7 @@ fn disabled_names_from_metadata(
 
 fn filter_tools_by_disabled_extensions(
     tools: Vec<crate::llm::ToolDefinition>,
-    disabled_extensions: &std::collections::HashSet<String>,
+    disabled_extensions: &HashSet<String>,
 ) -> Vec<crate::llm::ToolDefinition> {
     if disabled_extensions.is_empty() {
         return tools;
@@ -50,12 +51,19 @@ fn filter_tools_by_disabled_extensions(
 
     tools
         .into_iter()
-        .filter(|tool| {
-            !disabled_extensions
-                .iter()
-                .any(|ext| tool.name.starts_with(&format!("{}_", ext)))
-        })
+        .filter(|tool| !is_tool_disabled_by_extensions(&tool.name, disabled_extensions))
         .collect()
+}
+
+fn is_tool_disabled_by_extensions(
+    tool_name: &str,
+    disabled_extensions: &HashSet<String>,
+) -> bool {
+    disabled_extensions.iter().any(|ext| {
+        tool_name
+            .strip_prefix(ext)
+            .is_some_and(|suffix| suffix.starts_with('_'))
+    })
 }
 
 /// Result of the agentic loop execution.
@@ -228,6 +236,7 @@ impl Agent {
             message,
             job_ctx,
             active_skills,
+            disabled_extensions,
             cached_prompt,
             cached_prompt_no_tools,
             nudge_at,
@@ -306,6 +315,7 @@ struct ChatDelegate<'a> {
     message: &'a IncomingMessage,
     job_ctx: JobContext,
     active_skills: Vec<crate::skills::LoadedSkill>,
+    disabled_extensions: HashSet<String>,
     cached_prompt: String,
     cached_prompt_no_tools: String,
     nudge_at: usize,
@@ -345,6 +355,8 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
 
         // Refresh tool definitions each iteration so newly built tools become visible
         let tool_defs = self.agent.tools().tool_definitions().await;
+        let tool_defs =
+            filter_tools_by_disabled_extensions(tool_defs, &self.disabled_extensions);
 
         // Apply trust-based tool attenuation if skills are active.
         let tool_defs = if !self.active_skills.is_empty() {
@@ -655,6 +667,16 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
 
         for (idx, original_tc) in tool_calls.iter().enumerate() {
             let mut tc = original_tc.clone();
+
+            if is_tool_disabled_by_extensions(&tc.name, &self.disabled_extensions) {
+                preflight.push((
+                    tc,
+                    PreflightOutcome::Rejected(
+                        "Tool is disabled by extension policy for this session".to_string(),
+                    ),
+                ));
+                continue;
+            }
 
             let tool_opt = self.agent.tools().get(&tc.name).await;
             let sensitive = tool_opt
@@ -1361,6 +1383,7 @@ mod tests {
 
     use super::{
         check_auth_required, disabled_names_from_metadata, filter_tools_by_disabled_extensions,
+        is_tool_disabled_by_extensions,
     };
 
     /// Minimal LLM provider for unit tests that always returns a static response.
@@ -1517,6 +1540,24 @@ mod tests {
         assert!(!names.contains(&"github_create_issue".to_string()));
         assert!(names.contains(&"calendar_list".to_string()));
         assert!(names.contains(&"shell".to_string()));
+    }
+
+    #[test]
+    fn test_is_tool_disabled_by_extensions_matches_prefix() {
+        let disabled: std::collections::HashSet<String> =
+            ["github".to_string(), "calendar".to_string()]
+                .into_iter()
+                .collect();
+
+        assert!(is_tool_disabled_by_extensions("github_create_issue", &disabled));
+        assert!(is_tool_disabled_by_extensions("calendar_list", &disabled));
+        assert!(!is_tool_disabled_by_extensions("shell", &disabled));
+    }
+
+    #[test]
+    fn test_is_tool_disabled_by_extensions_returns_false_for_empty_set() {
+        let disabled: std::collections::HashSet<String> = std::collections::HashSet::new();
+        assert!(!is_tool_disabled_by_extensions("github_create_issue", &disabled));
     }
 
     #[test]
