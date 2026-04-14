@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
@@ -244,9 +245,18 @@ impl SkillCatalog {
 
     /// Fetch search results from the ClawHub API.
     async fn fetch_search(&self, query: &str) -> CatalogSearchOutcome {
-        let url = format!("{}/api/v1/search", self.registry_url);
+        let url = match build_registry_api_url(&self.registry_url, "search", &[("q", query)]) {
+            Ok(url) => url,
+            Err(error) => {
+                tracing::warn!("Catalog search failed (invalid registry URL): {}", error);
+                return CatalogSearchOutcome {
+                    results: Vec::new(),
+                    error: Some("Invalid registry URL configuration".to_string()),
+                };
+            }
+        };
 
-        let response = match self.client.get(&url).query(&[("q", query)]).send().await {
+        let response = match self.client.get(url).send().await {
             Ok(resp) => resp,
             Err(e) => {
                 tracing::warn!("Catalog search failed (network): {}", e);
@@ -327,13 +337,10 @@ impl SkillCatalog {
     /// Calls `GET /api/v1/skills/{slug}` and returns the detail if available.
     /// Returns `None` on any network or parse error (best-effort).
     pub async fn fetch_skill_detail(&self, slug: &str) -> Option<SkillDetail> {
-        let url = format!(
-            "{}/api/v1/skills/{}",
-            self.registry_url,
-            urlencoding::encode(slug)
-        );
+        let endpoint = format!("skills/{}", urlencoding::encode(slug));
+        let url = build_registry_api_url(&self.registry_url, &endpoint, &[]).ok()?;
 
-        let response = self.client.get(&url).send().await.ok()?;
+        let response = self.client.get(url).send().await.ok()?;
         if !response.status().is_success() {
             tracing::debug!(
                 "Skill detail for '{}' returned status {}",
@@ -427,16 +434,52 @@ struct CatalogSearchResult {
     updated_at: Option<u64>,
 }
 
+fn build_registry_api_url(
+    registry_url: &str,
+    endpoint: &str,
+    extra_query: &[(&str, &str)],
+) -> Result<Url, String> {
+    let mut url = Url::parse(registry_url)
+        .map_err(|error| format!("invalid registry URL '{}': {}", registry_url, error))?;
+
+    let base_path = registry_api_base_path(url.path());
+    let endpoint = endpoint.trim_start_matches('/');
+    url.set_path(&format!("{}/{}", base_path, endpoint));
+
+    if !extra_query.is_empty() {
+        let mut pairs = url.query_pairs_mut();
+        for &(key, value) in extra_query {
+            pairs.append_pair(key, value);
+        }
+    }
+
+    Ok(url)
+}
+
+fn registry_api_base_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == "/" {
+        return "/api/v1".to_string();
+    }
+    if trimmed.ends_with("/api/v1") {
+        return trimmed.to_string();
+    }
+    format!("{}/api/v1", trimmed)
+}
+
 /// Construct the download URL for a skill's SKILL.md from the registry.
 ///
 /// The slug is URL-encoded to prevent query string injection via special
 /// characters like `&` or `#`.
 pub fn skill_download_url(registry_url: &str, slug: &str) -> String {
-    format!(
-        "{}/api/v1/download?slug={}",
-        registry_url,
-        urlencoding::encode(slug)
-    )
+    match build_registry_api_url(registry_url, "download", &[("slug", slug)]) {
+        Ok(url) => url.to_string(),
+        Err(_) => format!(
+            "{}/api/v1/download?slug={}",
+            registry_url,
+            urlencoding::encode(slug)
+        ),
+    }
 }
 
 /// Convenience wrapper for creating a shared catalog.
@@ -515,6 +558,16 @@ mod tests {
     fn test_skill_download_url_encodes_special_chars() {
         let url = skill_download_url("https://clawhub.ai", "foo&bar=baz#frag");
         assert!(url.contains("slug=foo%26bar%3Dbaz%23frag"));
+    }
+
+    #[test]
+    fn test_skill_download_url_preserves_registry_query_params() {
+        let url =
+            skill_download_url("https://admin.example.com/api/v1?client_token=abc", "owner/demo");
+        assert_eq!(
+            url,
+            "https://admin.example.com/api/v1/download?client_token=abc&slug=owner%2Fdemo"
+        );
     }
 
     #[test]
