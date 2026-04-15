@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
     conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
+    attachments TEXT NOT NULL DEFAULT '[]',
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -787,7 +788,52 @@ CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_api_tokens_hash ON api_tokens(token_hash);
 "#,
     ),
+    (
+        15,
+        "conversation_message_attachments",
+        r#"
+ALTER TABLE conversation_messages ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]';
+"#,
+    ),
 ];
+
+async fn conversation_messages_has_attachments_column(
+    conn: &libsql::Connection,
+) -> Result<bool, crate::error::DatabaseError> {
+    use crate::error::DatabaseError;
+
+    let mut rows = conn
+        .query("PRAGMA table_info(conversation_messages)", ())
+        .await
+        .map_err(|e| {
+            DatabaseError::Migration(format!(
+                "Failed to inspect conversation_messages schema before incremental migrations: {e}"
+            ))
+        })?;
+
+    while let Some(row) = rows.next().await.map_err(|e| {
+        DatabaseError::Migration(format!(
+            "Failed to read conversation_messages schema before incremental migrations: {e}"
+        ))
+    })? {
+        if row.get::<String>(1).unwrap_or_default() == "attachments" {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
+}
+
+async fn should_skip_incremental_migration(
+    conn: &libsql::Connection,
+    version: i64,
+) -> Result<bool, crate::error::DatabaseError> {
+    if version == 15 {
+        return conversation_messages_has_attachments_column(conn).await;
+    }
+
+    Ok(false)
+}
 
 /// Run incremental migrations that haven't been applied yet.
 ///
@@ -811,6 +857,22 @@ pub async fn run_incremental(conn: &libsql::Connection) -> Result<(), crate::err
 
         if rows.next().await.ok().flatten().is_some() {
             continue; // Already applied
+        }
+
+        if should_skip_incremental_migration(conn, version).await? {
+            conn.execute(
+                "INSERT INTO _migrations (version, name) VALUES (?1, ?2)",
+                libsql::params![version, name],
+            )
+            .await
+            .map_err(|e| {
+                DatabaseError::Migration(format!(
+                    "Failed to record skipped migration V{version} ({name}): {e}"
+                ))
+            })?;
+            tracing::debug!(version, name, "libSQL: migration already satisfied by base schema");
+            applied_count += 1;
+            continue;
         }
 
         // Wrap migration + recording in a transaction for atomicity.

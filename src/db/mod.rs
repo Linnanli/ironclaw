@@ -36,7 +36,7 @@ use crate::error::DatabaseError;
 use crate::error::WorkspaceError;
 use crate::history::{
     AgentJobRecord, AgentJobSummary, ConversationMessage, ConversationSummary, JobEventRecord,
-    LlmCallRecord, SandboxJobRecord, SandboxJobSummary, SettingRow,
+    LlmCallRecord, PersistedAttachment, SandboxJobRecord, SandboxJobSummary, SettingRow,
 };
 use crate::workspace::{MemoryChunk, MemoryDocument, WorkspaceEntry};
 use crate::workspace::{SearchConfig, SearchResult};
@@ -366,6 +366,16 @@ pub trait ConversationStore: Send + Sync {
         conversation_id: Uuid,
         role: &str,
         content: &str,
+    ) -> Result<Uuid, DatabaseError> {
+        self.add_conversation_message_with_attachments(conversation_id, role, content, &[])
+            .await
+    }
+    async fn add_conversation_message_with_attachments(
+        &self,
+        conversation_id: Uuid,
+        role: &str,
+        content: &str,
+        attachments: &[PersistedAttachment],
     ) -> Result<Uuid, DatabaseError>;
     async fn ensure_conversation(
         &self,

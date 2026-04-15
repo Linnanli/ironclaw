@@ -1381,6 +1381,7 @@ impl Agent {
                             &message.channel,
                             &message.user_id,
                             content,
+                            &message.attachments,
                         )
                         .await;
                     }

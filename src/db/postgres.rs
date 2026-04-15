@@ -22,7 +22,7 @@ use crate::db::{
 use crate::error::{DatabaseError, WorkspaceError};
 use crate::history::{
     AgentJobRecord, AgentJobSummary, ConversationMessage, ConversationSummary, JobEventRecord,
-    LlmCallRecord, SandboxJobRecord, SandboxJobSummary, SettingRow, Store,
+    LlmCallRecord, PersistedAttachment, SandboxJobRecord, SandboxJobSummary, SettingRow, Store,
 };
 use crate::workspace::{
     MemoryChunk, MemoryDocument, Repository, SearchConfig, SearchResult, WorkspaceEntry,
@@ -82,14 +82,20 @@ impl ConversationStore for PgBackend {
         self.store.touch_conversation(id).await
     }
 
-    async fn add_conversation_message(
+    async fn add_conversation_message_with_attachments(
         &self,
         conversation_id: Uuid,
         role: &str,
         content: &str,
+        attachments: &[PersistedAttachment],
     ) -> Result<Uuid, DatabaseError> {
         self.store
-            .add_conversation_message(conversation_id, role, content)
+            .add_conversation_message_with_attachments(
+                conversation_id,
+                role,
+                content,
+                attachments,
+            )
             .await
     }
 

@@ -441,7 +441,8 @@ impl Agent {
             thread_id,
             &message.channel,
             &message.user_id,
-            effective_content,
+            content,
+            &message.attachments,
         )
         .await;
 
@@ -698,11 +699,17 @@ impl Agent {
         channel: &str,
         user_id: &str,
         user_input: &str,
+        attachments: &[crate::channels::IncomingAttachment],
     ) {
         let store = match self.store() {
             Some(s) => Arc::clone(s),
             None => return,
         };
+
+        let persisted_attachments: Vec<crate::history::PersistedAttachment> = attachments
+            .iter()
+            .map(crate::history::PersistedAttachment::from_incoming)
+            .collect();
 
         if !self
             .ensure_writable_conversation(&store, thread_id, channel, user_id)
@@ -712,7 +719,12 @@ impl Agent {
         }
 
         if let Err(e) = store
-            .add_conversation_message(thread_id, "user", user_input)
+            .add_conversation_message_with_attachments(
+                thread_id,
+                "user",
+                user_input,
+                &persisted_attachments,
+            )
             .await
         {
             tracing::warn!("Failed to persist user message: {}", e);
@@ -764,15 +776,12 @@ impl Agent {
         user_id: &str,
         stats: &serde_json::Value,
     ) {
-        if channel != "tauri" {
-            return;
-        }
         let payload = serde_json::json!({
             "kind": "ui_event",
             "event": "dlp_redacted",
             "stats": stats,
         });
-        self.persist_ui_event_message(thread_id, channel, user_id, &payload)
+        self.persist_tauri_ui_event(thread_id, channel, user_id, &payload)
             .await;
     }
 
@@ -786,9 +795,6 @@ impl Agent {
         tool_name: &str,
         description: &str,
     ) {
-        if channel != "tauri" {
-            return;
-        }
         let payload = serde_json::json!({
             "kind": "ui_event",
             "event": "approval_needed",
@@ -796,7 +802,7 @@ impl Agent {
             "tool_name": tool_name,
             "description": description,
         });
-        self.persist_ui_event_message(thread_id, channel, user_id, &payload)
+        self.persist_tauri_ui_event(thread_id, channel, user_id, &payload)
             .await;
     }
 
@@ -809,16 +815,28 @@ impl Agent {
         request_id: Uuid,
         approved: bool,
     ) {
-        if channel != "tauri" {
-            return;
-        }
         let payload = serde_json::json!({
             "kind": "ui_event",
             "event": "approval_resolved",
             "request_id": request_id.to_string(),
             "approved": approved,
         });
-        self.persist_ui_event_message(thread_id, channel, user_id, &payload)
+        self.persist_tauri_ui_event(thread_id, channel, user_id, &payload)
+            .await;
+    }
+
+    async fn persist_tauri_ui_event(
+        &self,
+        thread_id: Uuid,
+        channel: &str,
+        user_id: &str,
+        payload: &serde_json::Value,
+    ) {
+        if channel != "tauri" {
+            return;
+        }
+
+        self.persist_ui_event_message(thread_id, channel, user_id, payload)
             .await;
     }
 
@@ -2017,7 +2035,7 @@ fn rebuild_chat_messages_from_db(
 
     for msg in db_messages {
         match msg.role.as_str() {
-            "user" => result.push(ChatMessage::user(&msg.content)),
+            "user" => result.push(rebuild_user_chat_message(msg)),
             "assistant" => result.push(ChatMessage::assistant(&msg.content)),
             "tool_calls" => {
                 // Try to parse the enriched JSON and rebuild tool messages.
@@ -2100,6 +2118,18 @@ fn rebuild_chat_messages_from_db(
     }
 
     result
+}
+
+fn rebuild_user_chat_message(msg: &crate::history::ConversationMessage) -> ChatMessage {
+    if msg.attachments.is_empty() {
+        return ChatMessage::user(&msg.content);
+    }
+
+    let attachments: Vec<_> = msg.attachments.iter().map(|att| att.to_incoming()).collect();
+    match crate::agent::attachments::augment_with_attachments(&msg.content, &attachments) {
+        Some(augmented) => ChatMessage::user_with_parts(augmented.text, augmented.image_parts),
+        None => ChatMessage::user(&msg.content),
+    }
 }
 
 #[cfg(test)]
@@ -2222,6 +2252,37 @@ mod tests {
     }
 
     #[test]
+    fn test_rebuild_chat_messages_restores_user_attachments() {
+        let mut user = make_db_msg("user", "Please inspect this image");
+        user.attachments = vec![crate::history::PersistedAttachment {
+            id: "img-1".to_string(),
+            kind: "image".to_string(),
+            mime_type: "image/png".to_string(),
+            filename: Some("diagram.png".to_string()),
+            size_bytes: Some(12),
+            extracted_text: None,
+            image_data_base64: Some(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"png-bytes",
+            )),
+            duration_secs: None,
+        }];
+
+        let result = rebuild_chat_messages_from_db(&[user]);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].role, crate::llm::Role::User);
+        assert!(result[0].content.contains("<attachments>"));
+        assert_eq!(result[0].content_parts.len(), 1);
+        match &result[0].content_parts[0] {
+            crate::llm::ContentPart::ImageUrl { image_url } => {
+                assert!(image_url.url.starts_with("data:image/png;base64,"));
+            }
+            other => panic!("expected image content part, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_rebuild_chat_messages_malformed_tool_calls_json() {
         let messages = vec![
             make_db_msg("user", "Hi"),
@@ -2272,6 +2333,7 @@ mod tests {
             id: uuid::Uuid::new_v4(),
             role: role.to_string(),
             content: content.to_string(),
+            attachments: Vec::new(),
             created_at: chrono::Utc::now(),
         }
     }

@@ -3,12 +3,15 @@
 #[cfg(feature = "postgres")]
 use std::collections::HashMap;
 
+use base64::Engine;
 use chrono::{DateTime, Utc};
 #[cfg(feature = "postgres")]
 use deadpool_postgres::{Config, Pool};
 use rust_decimal::Decimal;
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::channels::{AttachmentKind, IncomingAttachment};
 #[cfg(feature = "postgres")]
 use crate::config::DatabaseConfig;
 #[cfg(feature = "postgres")]
@@ -118,18 +121,21 @@ impl Store {
     }
 
     /// Add a message to a conversation.
-    pub async fn add_conversation_message(
+    pub async fn add_conversation_message_with_attachments(
         &self,
         conversation_id: Uuid,
         role: &str,
         content: &str,
+        attachments: &[PersistedAttachment],
     ) -> Result<Uuid, DatabaseError> {
         let conn = self.conn().await?;
         let id = Uuid::new_v4();
+        let attachments_json = serde_json::to_value(attachments)
+            .map_err(|e| DatabaseError::Query(e.to_string()))?;
 
         conn.execute(
-            "INSERT INTO conversation_messages (id, conversation_id, role, content) VALUES ($1, $2, $3, $4)",
-            &[&id, &conversation_id, &role, &content],
+            "INSERT INTO conversation_messages (id, conversation_id, role, content, attachments) VALUES ($1, $2, $3, $4, $5)",
+            &[&id, &conversation_id, &role, &content, &attachments_json],
         )
         .await?;
 
@@ -137,6 +143,16 @@ impl Store {
         self.touch_conversation(conversation_id).await?;
 
         Ok(id)
+    }
+
+    pub async fn add_conversation_message(
+        &self,
+        conversation_id: Uuid,
+        role: &str,
+        content: &str,
+    ) -> Result<Uuid, DatabaseError> {
+        self.add_conversation_message_with_attachments(conversation_id, role, content, &[])
+            .await
     }
 
     // ==================== Jobs ====================
@@ -1565,7 +1581,113 @@ pub struct ConversationMessage {
     pub id: Uuid,
     pub role: String,
     pub content: String,
+    pub attachments: Vec<PersistedAttachment>,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PersistedAttachment {
+    pub id: String,
+    pub kind: String,
+    pub mime_type: String,
+    pub filename: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub extracted_text: Option<String>,
+    pub image_data_base64: Option<String>,
+    pub duration_secs: Option<u32>,
+}
+
+impl PersistedAttachment {
+    pub fn from_incoming(attachment: &IncomingAttachment) -> Self {
+        Self {
+            id: attachment.id.clone(),
+            kind: persisted_attachment_kind(&attachment.kind).to_string(),
+            mime_type: attachment.mime_type.clone(),
+            filename: attachment.filename.clone(),
+            size_bytes: attachment.size_bytes,
+            extracted_text: attachment.extracted_text.clone(),
+            image_data_base64: encode_attachment_image(attachment),
+            duration_secs: attachment.duration_secs,
+        }
+    }
+
+    pub fn to_incoming(&self) -> IncomingAttachment {
+        IncomingAttachment {
+            id: self.id.clone(),
+            kind: parsed_attachment_kind(&self.kind),
+            mime_type: self.mime_type.clone(),
+            filename: self.filename.clone(),
+            size_bytes: self.size_bytes,
+            source_url: None,
+            storage_key: None,
+            extracted_text: self.extracted_text.clone(),
+            data: decode_attachment_image(&self.id, &self.image_data_base64),
+            duration_secs: self.duration_secs,
+        }
+    }
+
+    pub fn image_data_url(&self) -> Option<String> {
+        self.image_data_base64
+            .as_ref()
+            .map(|data| format!("data:{};base64,{}", self.mime_type, data))
+    }
+}
+
+fn persisted_attachment_kind(kind: &AttachmentKind) -> &'static str {
+    match kind {
+        AttachmentKind::Audio => "audio",
+        AttachmentKind::Image => "image",
+        AttachmentKind::Document => "document",
+    }
+}
+
+fn parsed_attachment_kind(kind: &str) -> AttachmentKind {
+    match kind {
+        "audio" => AttachmentKind::Audio,
+        "image" => AttachmentKind::Image,
+        _ => AttachmentKind::Document,
+    }
+}
+
+fn encode_attachment_image(attachment: &IncomingAttachment) -> Option<String> {
+    if attachment.kind == AttachmentKind::Image && !attachment.data.is_empty() {
+        Some(base64::engine::general_purpose::STANDARD.encode(&attachment.data))
+    } else {
+        None
+    }
+}
+
+fn decode_attachment_image(id: &str, image_data_base64: &Option<String>) -> Vec<u8> {
+    let Some(data) = image_data_base64.as_deref() else {
+        return Vec::new();
+    };
+
+    match base64::engine::general_purpose::STANDARD.decode(data) {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            tracing::warn!(attachment_id = id, error = %error, "Failed to decode persisted attachment image data");
+            Vec::new()
+        }
+    }
+}
+
+fn parse_persisted_attachments_json(value: Option<serde_json::Value>) -> Vec<PersistedAttachment> {
+    value
+        .and_then(|json| serde_json::from_value(json).ok())
+        .unwrap_or_default()
+}
+
+#[cfg(feature = "postgres")]
+fn row_to_conversation_message(row: &tokio_postgres::Row) -> ConversationMessage {
+    ConversationMessage {
+        id: row.get("id"),
+        role: row.get("role"),
+        content: row.get("content"),
+        attachments: parse_persisted_attachments_json(
+            row.get::<_, Option<serde_json::Value>>("attachments"),
+        ),
+        created_at: row.get("created_at"),
+    }
 }
 
 #[cfg(feature = "postgres")]
@@ -1929,7 +2051,7 @@ impl Store {
         let rows = if let Some(before_ts) = before {
             conn.query(
                 r#"
-                SELECT id, role, content, created_at
+                SELECT id, role, content, attachments, created_at
                 FROM conversation_messages
                 WHERE conversation_id = $1 AND created_at < $2
                 ORDER BY created_at DESC
@@ -1941,7 +2063,7 @@ impl Store {
         } else {
             conn.query(
                 r#"
-                SELECT id, role, content, created_at
+                SELECT id, role, content, attachments, created_at
                 FROM conversation_messages
                 WHERE conversation_id = $1
                 ORDER BY created_at DESC
@@ -1959,12 +2081,7 @@ impl Store {
         let mut messages: Vec<ConversationMessage> = rows
             .iter()
             .take(take_count)
-            .map(|r| ConversationMessage {
-                id: r.get("id"),
-                role: r.get("role"),
-                content: r.get("content"),
-                created_at: r.get("created_at"),
-            })
+            .map(row_to_conversation_message)
             .collect();
         messages.reverse();
 
@@ -2009,7 +2126,7 @@ impl Store {
         let rows = conn
             .query(
                 r#"
-                SELECT id, role, content, created_at
+                SELECT id, role, content, attachments, created_at
                 FROM conversation_messages
                 WHERE conversation_id = $1
                 ORDER BY created_at ASC
@@ -2020,12 +2137,7 @@ impl Store {
 
         Ok(rows
             .iter()
-            .map(|r| ConversationMessage {
-                id: r.get("id"),
-                role: r.get("role"),
-                content: r.get("content"),
-                created_at: r.get("created_at"),
-            })
+            .map(row_to_conversation_message)
             .collect())
     }
 }

@@ -12,7 +12,7 @@ use rig::completion::{
     ToolDefinition as RigToolDefinition, Usage as RigUsage,
 };
 use rig::message::{
-    DocumentSourceKind, Image, ImageMediaType, Message as RigMessage, MimeType,
+    DocumentSourceKind, Image, ImageDetail, ImageMediaType, Message as RigMessage, MimeType,
     ToolChoice as RigToolChoice, ToolFunction, ToolResult as RigToolResult, ToolResultContent,
     UserContent,
 };
@@ -352,14 +352,14 @@ fn convert_messages(messages: &[ChatMessage]) -> (Option<String>, Vec<RigMessage
                                 Image {
                                     data: DocumentSourceKind::base64(b64),
                                     media_type: ImageMediaType::from_mime_type(mime),
-                                    detail: None,
+                                    detail: Some(ImageDetail::Auto),
                                     additional_params: None,
                                 }
                             } else {
                                 Image {
                                     data: DocumentSourceKind::url(&image_url.url),
                                     media_type: None,
-                                    detail: None,
+                                    detail: Some(ImageDetail::Auto),
                                     additional_params: None,
                                 }
                             };
@@ -1594,6 +1594,36 @@ mod tests {
         assert_eq!(history.len(), 2, "only non-empty messages should survive");
         assert!(matches!(history[0], RigMessage::User { .. }));
         assert!(matches!(history[1], RigMessage::Assistant { .. }));
+    }
+
+    #[test]
+    fn test_multimodal_image_defaults_to_auto_detail() {
+        let message = ChatMessage::user_with_parts(
+            "describe this image",
+            vec![crate::llm::ContentPart::ImageUrl {
+                image_url: crate::llm::ImageUrl {
+                    url: "data:image/png;base64,ZmFrZQ==".to_string(),
+                    detail: None,
+                },
+            }],
+        );
+
+        let (_preamble, history) = convert_messages(&[message]);
+
+        assert_eq!(history.len(), 1);
+        match &history[0] {
+            RigMessage::User { content } => {
+                let parts: Vec<_> = content.iter().collect();
+                assert_eq!(parts.len(), 2, "expected text part plus image part");
+                match parts.get(1) {
+                    Some(UserContent::Image(image)) => {
+                        assert_eq!(image.detail, Some(ImageDetail::Auto));
+                    }
+                    other => panic!("expected image content, got {:?}", other),
+                }
+            }
+            other => panic!("expected user message, got {:?}", other),
+        }
     }
 
     // -- normalized_tool_call_id tests --

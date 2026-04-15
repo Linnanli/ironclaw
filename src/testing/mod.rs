@@ -669,6 +669,44 @@ mod tests {
 
     #[cfg(feature = "libsql")]
     #[tokio::test]
+    async fn test_conversation_message_attachments_round_trip() {
+        let harness = TestHarnessBuilder::new().build().await;
+        let db = &harness.db;
+
+        let conv_id = db
+            .create_conversation("tui", "alice", None)
+            .await
+            .expect("create conversation");
+
+        let attachments = vec![crate::history::PersistedAttachment {
+            id: "img-1".to_string(),
+            kind: "image".to_string(),
+            mime_type: "image/png".to_string(),
+            filename: Some("diagram.png".to_string()),
+            size_bytes: Some(8),
+            extracted_text: None,
+            image_data_base64: Some(base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                b"png-data",
+            )),
+            duration_secs: None,
+        }];
+
+        db.add_conversation_message_with_attachments(conv_id, "user", "See attachment", &attachments)
+            .await
+            .expect("add message with attachments");
+
+        let msgs = db
+            .list_conversation_messages(conv_id)
+            .await
+            .expect("list messages");
+
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].attachments, attachments);
+    }
+
+    #[cfg(feature = "libsql")]
+    #[tokio::test]
     async fn test_conversation_metadata_persistence() {
         let harness = TestHarnessBuilder::new().build().await;
         let db = &harness.db;

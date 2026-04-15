@@ -8,7 +8,17 @@ use uuid::Uuid;
 use super::{LibSqlBackend, fmt_ts, get_i64, get_json, get_opt_text, get_text, get_ts, opt_text};
 use crate::db::ConversationStore;
 use crate::error::DatabaseError;
-use crate::history::{ConversationMessage, ConversationSummary};
+use crate::history::{ConversationMessage, ConversationSummary, PersistedAttachment};
+
+fn row_to_conversation_message(row: &libsql::Row) -> ConversationMessage {
+    ConversationMessage {
+        id: get_text(row, 0).parse().unwrap_or_default(),
+        role: get_text(row, 1),
+        content: get_text(row, 2),
+        attachments: serde_json::from_value(get_json(row, 3)).unwrap_or_default(),
+        created_at: get_ts(row, 4),
+    }
+}
 
 #[async_trait]
 impl ConversationStore for LibSqlBackend {
@@ -42,18 +52,28 @@ impl ConversationStore for LibSqlBackend {
         Ok(())
     }
 
-    async fn add_conversation_message(
+    async fn add_conversation_message_with_attachments(
         &self,
         conversation_id: Uuid,
         role: &str,
         content: &str,
+        attachments: &[PersistedAttachment],
     ) -> Result<Uuid, DatabaseError> {
         let conn = self.connect().await?;
         let id = Uuid::new_v4();
         let now = fmt_ts(&Utc::now());
+        let attachments_json = serde_json::to_string(attachments)
+            .map_err(|e| DatabaseError::Query(e.to_string()))?;
         conn.execute(
-                "INSERT INTO conversation_messages (id, conversation_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
-                params![id.to_string(), conversation_id.to_string(), role, content, now],
+                "INSERT INTO conversation_messages (id, conversation_id, role, content, attachments, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id.to_string(),
+                    conversation_id.to_string(),
+                    role,
+                    content,
+                    attachments_json,
+                    now,
+                ],
             )
             .await
             .map_err(|e| DatabaseError::Query(e.to_string()))?;
@@ -462,7 +482,7 @@ impl ConversationStore for LibSqlBackend {
         let mut rows = if let Some(before_ts) = before {
             conn.query(
                 r#"
-                    SELECT id, role, content, created_at
+                    SELECT id, role, content, attachments, created_at
                     FROM conversation_messages
                     WHERE conversation_id = ?1 AND created_at < ?2
                     ORDER BY created_at DESC, rowid DESC
@@ -474,7 +494,7 @@ impl ConversationStore for LibSqlBackend {
         } else {
             conn.query(
                 r#"
-                    SELECT id, role, content, created_at
+                    SELECT id, role, content, attachments, created_at
                     FROM conversation_messages
                     WHERE conversation_id = ?1
                     ORDER BY created_at DESC, rowid DESC
@@ -492,12 +512,7 @@ impl ConversationStore for LibSqlBackend {
             .await
             .map_err(|e| DatabaseError::Query(e.to_string()))?
         {
-            all.push(ConversationMessage {
-                id: get_text(&row, 0).parse().unwrap_or_default(),
-                role: get_text(&row, 1),
-                content: get_text(&row, 2),
-                created_at: get_ts(&row, 3),
-            });
+            all.push(row_to_conversation_message(&row));
         }
 
         let has_more = all.len() as i64 > limit;
@@ -555,7 +570,7 @@ impl ConversationStore for LibSqlBackend {
         let mut rows = conn
             .query(
                 r#"
-                SELECT id, role, content, created_at
+                SELECT id, role, content, attachments, created_at
                 FROM conversation_messages
                 WHERE conversation_id = ?1
                 ORDER BY created_at ASC, rowid ASC
@@ -571,12 +586,7 @@ impl ConversationStore for LibSqlBackend {
             .await
             .map_err(|e| DatabaseError::Query(e.to_string()))?
         {
-            messages.push(ConversationMessage {
-                id: get_text(&row, 0).parse().unwrap_or_default(),
-                role: get_text(&row, 1),
-                content: get_text(&row, 2),
-                created_at: get_ts(&row, 3),
-            });
+            messages.push(row_to_conversation_message(&row));
         }
         Ok(messages)
     }

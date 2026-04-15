@@ -135,6 +135,7 @@ mod tests {
             id: Uuid::new_v4(),
             role: role.to_string(),
             content: content.to_string(),
+            attachments: Vec::new(),
             created_at: chrono::Utc::now() + chrono::TimeDelta::milliseconds(offset_ms),
         }
     }
