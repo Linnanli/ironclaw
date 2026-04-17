@@ -116,6 +116,52 @@ impl Session {
             false
         }
     }
+
+    /// Fork a thread at a specific turn, creating a new independent thread.
+    ///
+    /// Copies message history up to `at_turn` (exclusive). The new thread
+    /// starts in `Idle` state and records its fork origin. Pending approvals
+    /// and auth state are NOT copied.
+    ///
+    /// Returns `None` if the source thread doesn't exist or `at_turn` is
+    /// out of range (must be 0..=source.turns.len()).
+    pub fn fork_thread(&mut self, source_thread_id: Uuid, at_turn: usize) -> Option<Uuid> {
+        let source = self.threads.get(&source_thread_id)?;
+        if at_turn > source.turns.len() {
+            return None;
+        }
+
+        let copied_turns: Vec<Turn> = source.turns[..at_turn]
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(i, mut t)| { t.turn_number = i; t })
+            .collect();
+
+        let now = Utc::now();
+        let new_id = Uuid::new_v4();
+        let forked = Thread {
+            id: new_id,
+            session_id: self.id,
+            state: ThreadState::Idle,
+            turns: copied_turns,
+            created_at: now,
+            updated_at: now,
+            metadata: serde_json::json!({"forked_from": source_thread_id.to_string()}),
+            pending_approval: None,
+            pending_auth: None,
+            pending_messages: VecDeque::new(),
+            plan_mode: false,
+            pending_plan: None,
+            forked_from: Some(source_thread_id),
+            fork_point: Some(at_turn),
+        };
+
+        self.threads.insert(new_id, forked);
+        self.active_thread = Some(new_id);
+        self.last_active_at = now;
+        Some(new_id)
+    }
 }
 
 /// State of a thread.
@@ -125,6 +171,9 @@ pub enum ThreadState {
     Idle,
     /// Thread is processing a turn.
     Processing,
+    /// Thread is in planning mode — only read-only tools allowed,
+    /// write tools return dry-run previews instead of executing.
+    Planning,
     /// Thread is waiting for user approval.
     AwaitingApproval,
     /// Thread has completed (no more turns expected).
@@ -199,6 +248,45 @@ fn default_true() -> bool {
     true
 }
 
+/// A planned action step within a plan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanStep {
+    /// Step number (1-indexed).
+    pub step: usize,
+    /// Description of the action.
+    pub description: String,
+    /// Tool to invoke.
+    pub tool_name: String,
+    /// Tool parameters.
+    pub parameters: serde_json::Value,
+    /// Risk level for this step.
+    pub risk: String,
+    /// Files involved.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<String>,
+    /// Whether this step has been executed.
+    #[serde(default)]
+    pub executed: bool,
+    /// Execution result (set after execution).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+}
+
+/// A pending plan awaiting user approval.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingPlan {
+    /// Unique plan ID.
+    pub plan_id: Uuid,
+    /// Goal description.
+    pub goal: String,
+    /// Planned steps.
+    pub steps: Vec<PlanStep>,
+    /// Overall confidence (0.0–1.0).
+    pub confidence: f64,
+    /// When the plan was created.
+    pub created_at: DateTime<Utc>,
+}
+
 /// A conversation thread within a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Thread {
@@ -225,6 +313,18 @@ pub struct Thread {
     /// Messages queued while the thread was processing a turn.
     #[serde(default, skip_serializing_if = "VecDeque::is_empty")]
     pub pending_messages: VecDeque<String>,
+    /// Whether plan mode is active for this thread.
+    #[serde(default)]
+    pub plan_mode: bool,
+    /// Pending plan awaiting approval (when plan_mode is true).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_plan: Option<PendingPlan>,
+    /// ID of the thread this was forked from (if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<Uuid>,
+    /// Turn number at which the fork was created (if forked).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fork_point: Option<usize>,
 }
 
 /// Maximum number of messages that can be queued while a thread is processing.
@@ -248,6 +348,10 @@ impl Thread {
             pending_approval: None,
             pending_auth: None,
             pending_messages: VecDeque::new(),
+            plan_mode: false,
+            pending_plan: None,
+            forked_from: None,
+            fork_point: None,
         }
     }
 
@@ -265,6 +369,10 @@ impl Thread {
             pending_approval: None,
             pending_auth: None,
             pending_messages: VecDeque::new(),
+            plan_mode: false,
+            pending_plan: None,
+            forked_from: None,
+            fork_point: None,
         }
     }
 
@@ -403,6 +511,46 @@ impl Thread {
             self.state = ThreadState::Idle;
             self.updated_at = Utc::now();
         }
+    }
+
+    /// Toggle plan mode on this thread.
+    ///
+    /// When enabled, the thread enters `Planning` state and write tools
+    /// return dry-run previews. When disabled, returns to `Idle`.
+    pub fn toggle_plan_mode(&mut self) -> bool {
+        self.plan_mode = !self.plan_mode;
+        if self.plan_mode {
+            self.state = ThreadState::Planning;
+        } else {
+            self.pending_plan = None;
+            self.state = ThreadState::Idle;
+        }
+        self.updated_at = Utc::now();
+        self.plan_mode
+    }
+
+    /// Set a pending plan for user approval.
+    pub fn set_pending_plan(&mut self, plan: PendingPlan) {
+        self.pending_plan = Some(plan);
+        self.updated_at = Utc::now();
+    }
+
+    /// Approve the pending plan and switch to processing mode.
+    ///
+    /// Returns the plan if one was pending, `None` otherwise.
+    pub fn approve_plan(&mut self) -> Option<PendingPlan> {
+        let plan = self.pending_plan.take();
+        if plan.is_some() {
+            self.plan_mode = false;
+            self.state = ThreadState::Processing;
+            self.updated_at = Utc::now();
+        }
+        plan
+    }
+
+    /// Whether plan mode is currently active.
+    pub fn is_plan_mode(&self) -> bool {
+        self.plan_mode
     }
 
     /// Get all messages for context building, including tool call history.

@@ -21,9 +21,10 @@ use crate::tools::builtin::{
     GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
     GlobSearchTool, GrepSearchTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool,
     JsonTool, ListDirTool, ListJobsTool, LspQueryTool, MemoryReadTool, MemorySearchTool,
-    MemoryTreeTool, MemoryWriteTool, PromptQueue, ReadFileTool, ShellTool, SkillInstallTool,
-    SkillListTool, SkillRemoveTool, SkillSearchTool, TimeTool, ToolActivateTool, ToolAuthTool,
-    ToolInstallTool, ToolListTool, ToolRemoveTool, ToolSearchTool, ToolUpgradeTool, WriteFileTool,
+    MemoryTreeTool, MemoryWriteTool, PlanModeTool, PromptQueue, ReadFileTool, SessionForkTool,
+    ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, SubAgentTool,
+    TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool,
+    ToolSearchTool, ToolUpgradeTool, WriteFileTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};
@@ -389,7 +390,12 @@ impl ToolRegistry {
         let lsp_registry = Arc::new(crate::tools::builtin::lsp::LspRegistry::new());
         self.register_sync(Arc::new(LspQueryTool::new(lsp_registry)));
 
-        tracing::debug!("Registered 15 development tools");
+        // P2: Plan mode, session fork, sub-agent
+        self.register_sync(Arc::new(PlanModeTool::new()));
+        self.register_sync(Arc::new(SessionForkTool::new()));
+        self.register_sync(Arc::new(SubAgentTool::new()));
+
+        tracing::debug!("Registered 18 development tools");
     }
 
     /// Register memory tools with a workspace resolver.

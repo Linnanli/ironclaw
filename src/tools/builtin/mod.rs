@@ -16,11 +16,14 @@ mod json;
 pub mod memory;
 mod message;
 pub mod path_utils;
+mod plan_mode;
 mod restart;
 pub mod routine;
 pub mod secrets_tools;
+mod session_fork;
 pub(crate) mod shell;
 pub mod skill_tools;
+pub mod sub_agent;
 mod time;
 mod tool_info;
 
@@ -55,6 +58,9 @@ pub use git::{
     GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
 };
 pub use lsp::LspQueryTool;
+pub use plan_mode::PlanModeTool;
+pub use session_fork::SessionForkTool;
+pub use sub_agent::{SubAgentRole, SubAgentTool};
 mod html_converter;
 pub mod image_analyze;
 pub mod image_edit;

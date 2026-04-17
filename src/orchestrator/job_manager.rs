@@ -17,12 +17,23 @@ use crate::orchestrator::auth::{CredentialGrant, TokenStore};
 use crate::sandbox::connect_docker;
 
 /// Which mode a sandbox container runs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum JobMode {
     /// Standard IronClaw worker with proxied LLM calls.
     Worker,
     /// Claude Code bridge that spawns the `claude` CLI directly.
     ClaudeCode,
+    /// Lightweight sub-agent with restricted tool access and depth limit.
+    SubAgent {
+        /// Role determining the tool whitelist.
+        role: crate::tools::builtin::sub_agent::SubAgentRole,
+        /// Explicit tool whitelist (overrides role defaults if non-empty).
+        tool_whitelist: Vec<String>,
+        /// Maximum turns before the sub-agent must return a summary.
+        max_turns: u16,
+        /// Whether to inherit recent parent conversation context.
+        inherit_context: bool,
+    },
 }
 
 impl JobMode {
@@ -30,6 +41,7 @@ impl JobMode {
         match self {
             Self::Worker => "worker",
             Self::ClaudeCode => "claude_code",
+            Self::SubAgent { .. } => "sub_agent",
         }
     }
 }
@@ -269,7 +281,7 @@ impl ContainerJobManager {
             job_id,
             container_id: String::new(), // set after container creation
             state: ContainerState::Creating,
-            mode,
+            mode: mode.clone(),
             created_at: Utc::now(),
             project_dir: project_dir.clone(),
             task_description: task.to_string(),
@@ -354,7 +366,7 @@ impl ContainerJobManager {
         // Memory limit: Claude Code gets more memory
         let memory_mb = match mode {
             JobMode::ClaudeCode => self.config.claude_code_memory_limit_mb,
-            JobMode::Worker => self.config.memory_limit_mb,
+            JobMode::Worker | JobMode::SubAgent { .. } => self.config.memory_limit_mb,
         };
 
         // Create the container
@@ -380,7 +392,7 @@ impl ContainerJobManager {
 
         // Build CMD based on mode
         let cmd = match mode {
-            JobMode::Worker => vec![
+            JobMode::Worker | JobMode::SubAgent { .. } => vec![
                 "worker".to_string(),
                 "--job-id".to_string(),
                 job_id.to_string(),
@@ -422,6 +434,7 @@ impl ContainerJobManager {
         let container_name = match mode {
             JobMode::Worker => format!("ironclaw-worker-{}", job_id),
             JobMode::ClaudeCode => format!("ironclaw-claude-{}", job_id),
+            JobMode::SubAgent { .. } => format!("ironclaw-subagent-{}", job_id),
         };
         let options = CreateContainerOptions {
             name: container_name,

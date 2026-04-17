@@ -303,8 +303,8 @@ impl Agent {
                     "Thread completed. Use /thread new.",
                 ));
             }
-            ThreadState::Idle | ThreadState::Interrupted => {
-                // Can proceed
+            ThreadState::Idle | ThreadState::Interrupted | ThreadState::Planning => {
+                // Can proceed (Planning accepts input for plan refinement)
             }
         }
 
