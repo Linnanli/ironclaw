@@ -568,6 +568,7 @@ impl TestHarnessBuilder {
             builder: None,
             llm_backend: "nearai".to_string(),
             tenant_rates: std::sync::Arc::new(crate::tenant::TenantRateRegistry::new(4, 3)),
+            cache_monitor: None,
         };
 
         TestHarness {

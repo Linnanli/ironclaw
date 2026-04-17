@@ -12,6 +12,7 @@ pub mod builder;
 pub mod builtin;
 mod coercion;
 pub mod execute;
+pub mod feature_flags;
 pub mod mcp;
 pub mod rate_limiter;
 pub mod redaction;

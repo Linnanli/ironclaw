@@ -508,6 +508,16 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
             call_cost,
         );
 
+        // Record cache metrics for the prompt cache monitor.
+        if let Some(ref monitor) = self.agent.deps.cache_monitor {
+            monitor.record(
+                output.usage.input_tokens,
+                output.usage.cache_read_input_tokens,
+                output.usage.cache_creation_input_tokens,
+                false,
+            );
+        }
+
         // Persist LLM call to DB so usage stats survive restarts.
         // Chat turns don't create agent_jobs, so job_id is None.
         if let Some(store) = self.tenant.store() {
@@ -1458,6 +1468,7 @@ mod tests {
             builder: None,
             llm_backend: "nearai".to_string(),
             tenant_rates: Arc::new(crate::tenant::TenantRateRegistry::new(4, 3)),
+            cache_monitor: None,
         };
 
         Agent::new(
@@ -2403,6 +2414,7 @@ mod tests {
             builder: None,
             llm_backend: "nearai".to_string(),
             tenant_rates: Arc::new(crate::tenant::TenantRateRegistry::new(4, 3)),
+            cache_monitor: None,
         };
 
         Agent::new(
@@ -2533,6 +2545,7 @@ mod tests {
                 builder: None,
                 llm_backend: "nearai".to_string(),
                 tenant_rates: Arc::new(crate::tenant::TenantRateRegistry::new(4, 3)),
+                cache_monitor: None,
             };
 
             Agent::new(

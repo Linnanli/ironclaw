@@ -946,6 +946,16 @@ async fn async_main() -> anyhow::Result<()> {
             config.agent.max_llm_concurrent_per_user.unwrap_or(4),
             config.agent.max_jobs_concurrent_per_user.unwrap_or(3),
         )),
+        cache_monitor: {
+            let obs_config = ironclaw::observability::ObservabilityConfig {
+                backend: "log".to_string(),
+            };
+            let observer: std::sync::Arc<dyn ironclaw::observability::Observer> =
+                std::sync::Arc::from(ironclaw::observability::create_observer(&obs_config));
+            Some(std::sync::Arc::new(
+                ironclaw::observability::PromptCacheMonitor::new(observer),
+            ))
+        },
     };
 
     let channels_for_warnings = Arc::clone(&channels);

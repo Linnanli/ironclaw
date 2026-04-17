@@ -37,6 +37,15 @@ pub async fn execute_tool_with_safety(
             name: tool_name.to_string(),
         })?;
 
+    // Feature flag gate — reject disabled tools before any parameter work.
+    if !job_ctx.feature_flags.is_tool_enabled(tool_name) {
+        return Err(crate::error::ToolError::Disabled {
+            name: tool_name.to_string(),
+            reason: "disabled by feature flag".to_string(),
+        }
+        .into());
+    }
+
     let normalized_params = prepare_tool_params(tool.as_ref(), &params);
 
     // Validate tool parameters

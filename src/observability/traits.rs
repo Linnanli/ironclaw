@@ -72,6 +72,14 @@ pub enum ObserverEvent {
 
     /// An error occurred in a component.
     Error { component: String, message: String },
+
+    /// Prompt cache hit/miss from LLM response token usage.
+    PromptCache {
+        cache_read_tokens: u32,
+        cache_creation_tokens: u32,
+        total_input_tokens: u32,
+        static_layer_changed: bool,
+    },
 }
 
 /// Numeric metric samples.
@@ -85,6 +93,8 @@ pub enum ObserverMetric {
     ActiveJobs(u64),
     /// Current message queue depth (gauge).
     QueueDepth(u64),
+    /// Prompt cache hit rate (0.0–1.0) over recent requests.
+    PromptCacheHitRate(f64),
 }
 
 #[cfg(test)]

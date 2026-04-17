@@ -916,6 +916,10 @@ Respond with a JSON plan in this format:
     /// Callers can invoke this once before a loop and pass the result via
     /// `ReasoningContext::system_prompt` to avoid rebuilding each iteration.
     pub fn build_system_prompt_with_tools(&self, tools: &[ToolDefinition]) -> String {
+        if std::env::var("IRONCLAW_PROMPT_LAYERING").as_deref() == Ok("1") {
+            return self.build_system_prompt_layered(tools);
+        }
+
         let tools_section = if tools.is_empty() {
             String::new()
         } else {
@@ -1040,6 +1044,49 @@ Example:
             identity_section,
             skills_section,
         )
+    }
+
+    /// Build the system prompt using the layered architecture.
+    ///
+    /// Splits the prompt into a static portion (identity + tools + safety) and a
+    /// dynamic portion (skills, channel, extensions, etc). Inserting a boundary
+    /// marker between them allows Anthropic's automatic caching to stabilize the
+    /// cache key when only the dynamic part changes.
+    fn build_system_prompt_layered(&self, tools: &[ToolDefinition]) -> String {
+        use crate::llm::prompt::{DynamicLayerInput, LayeredPromptBuilder, StaticLayerConfig};
+
+        let has_native_thinking = self
+            .model_name
+            .as_ref()
+            .is_some_and(|n| crate::llm::reasoning_models::has_native_thinking(n));
+
+        let is_anthropic = self
+            .model_name
+            .as_ref()
+            .is_some_and(|n| n.contains("claude"));
+
+        let config = StaticLayerConfig {
+            identity: self.workspace_system_prompt.clone().unwrap_or_default(),
+            model_name: self.model_name.clone().unwrap_or_default(),
+            has_native_thinking,
+        };
+
+        let mut builder = LayeredPromptBuilder::new(tools, &config);
+        builder = builder.with_cache_boundary(is_anthropic);
+
+        let dynamic = DynamicLayerInput {
+            skill_context: self.skill_context.clone(),
+            channel: Some(self.build_channel_section()).filter(|s| !s.is_empty()),
+            extensions_guidance: Some(self.build_extensions_section_for_tools(tools))
+                .filter(|s| !s.is_empty()),
+            conversation_context: Some(self.build_conversation_section())
+                .filter(|s| !s.is_empty()),
+            group_guidance: Some(self.build_group_section()).filter(|s| !s.is_empty()),
+            runtime_info: Some(self.build_runtime_section()).filter(|s| !s.is_empty()),
+            ..Default::default()
+        };
+
+        builder.build(&dynamic).text
     }
 
     fn build_extensions_section_for_tools(&self, tools: &[ToolDefinition]) -> String {
@@ -2747,6 +2794,47 @@ That's my plan."#;
         assert!(
             !prompt.contains("Call tools when they would help"),
             "Prompt without tools should not contain tool-calling guidance"
+        );
+    }
+
+    #[test]
+    fn test_layered_prompt_contains_static_and_dynamic_content() {
+        let reasoning = make_test_reasoning()
+            .with_system_prompt("My workspace rules".to_string())
+            .with_skill_context("Always use TDD".to_string());
+        let tool_defs = vec![ToolDefinition {
+            name: "echo".to_string(),
+            description: "Echoes input".to_string(),
+            parameters: serde_json::json!({}),
+        }];
+
+        let prompt = reasoning.build_system_prompt_layered(&tool_defs);
+        // Static layer content
+        assert!(prompt.contains("My workspace rules"), "should contain identity");
+        assert!(prompt.contains("echo"), "should contain tool name");
+        // Dynamic layer content
+        assert!(prompt.contains("Always use TDD"), "should contain skill context");
+    }
+
+    #[test]
+    fn test_layered_prompt_inserts_boundary_for_claude() {
+        let reasoning = make_test_reasoning()
+            .with_model_name("claude-sonnet-4-20250514");
+        let prompt = reasoning.build_system_prompt_layered(&[]);
+        assert!(
+            prompt.contains("__PROMPT_CACHE_BOUNDARY__"),
+            "Claude model should get cache boundary marker"
+        );
+    }
+
+    #[test]
+    fn test_layered_prompt_omits_boundary_for_non_claude() {
+        let reasoning = make_test_reasoning()
+            .with_model_name("gpt-4o");
+        let prompt = reasoning.build_system_prompt_layered(&[]);
+        assert!(
+            !prompt.contains("__PROMPT_CACHE_BOUNDARY__"),
+            "Non-Claude model should not get cache boundary marker"
         );
     }
 

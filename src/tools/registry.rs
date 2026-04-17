@@ -17,12 +17,13 @@ use crate::tools::builder::{
     BuildSoftwareTool, BuilderConfig, LlmSoftwareBuilder, SoftwareBuilder,
 };
 use crate::tools::builtin::{
-    ApplyPatchTool, CancelJobTool, CreateJobTool, EchoTool, ExtensionInfoTool, HttpTool,
-    JobEventsTool, JobPromptTool, JobStatusTool, JsonTool, ListDirTool, ListJobsTool,
-    MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool, PromptQueue, ReadFileTool,
-    ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, TimeTool,
-    ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool, ToolSearchTool,
-    ToolUpgradeTool, WriteFileTool,
+    ApplyPatchTool, CancelJobTool, CodeEditTool, CreateJobTool, EchoTool, ExtensionInfoTool,
+    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
+    GlobSearchTool, GrepSearchTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool,
+    JsonTool, ListDirTool, ListJobsTool, LspQueryTool, MemoryReadTool, MemorySearchTool,
+    MemoryTreeTool, MemoryWriteTool, PromptQueue, ReadFileTool, ShellTool, SkillInstallTool,
+    SkillListTool, SkillRemoveTool, SkillSearchTool, TimeTool, ToolActivateTool, ToolAuthTool,
+    ToolInstallTool, ToolListTool, ToolRemoveTool, ToolSearchTool, ToolUpgradeTool, WriteFileTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};
@@ -45,6 +46,9 @@ const PROTECTED_TOOL_NAMES: &[&str] = &[
     "write_file",
     "list_dir",
     "apply_patch",
+    "code_edit",
+    "grep_search",
+    "glob_search",
     "memory_search",
     "memory_write",
     "memory_read",
@@ -78,6 +82,13 @@ const PROTECTED_TOOL_NAMES: &[&str] = &[
     "image_edit",
     "image_analyze",
     "tool_info",
+    "git_status",
+    "git_diff",
+    "git_log",
+    "git_commit",
+    "git_branch",
+    "git_push",
+    "lsp_query",
 ];
 
 /// Registry of available tools.
@@ -227,6 +238,25 @@ impl ToolRegistry {
         defs
     }
 
+    /// Get tool definitions filtered by feature flags.
+    ///
+    /// Disabled tools are excluded so the LLM never sees them in its prompt.
+    pub async fn tool_definitions_filtered(
+        &self,
+        flags: &crate::tools::feature_flags::ToolFeatureFlags,
+    ) -> Vec<ToolDefinition> {
+        let mut defs: Vec<ToolDefinition> = self
+            .tools
+            .read()
+            .await
+            .values()
+            .filter(|tool| flags.is_tool_enabled(tool.name()))
+            .map(Self::tool_definition)
+            .collect();
+        defs.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+        defs
+    }
+
     /// Get tool definitions for specific tools.
     pub async fn tool_definitions_for(&self, names: &[&str]) -> Vec<ToolDefinition> {
         let tools = self.tools.read().await;
@@ -291,6 +321,21 @@ impl ToolRegistry {
             .collect()
     }
 
+    /// Get tool definitions filtered by domain and feature flags.
+    pub async fn tool_definitions_for_domain_filtered(
+        &self,
+        domain: ToolDomain,
+        flags: &crate::tools::feature_flags::ToolFeatureFlags,
+    ) -> Vec<ToolDefinition> {
+        self.tools
+            .read()
+            .await
+            .values()
+            .filter(|tool| tool.domain() == domain && flags.is_tool_enabled(tool.name()))
+            .map(Self::tool_definition)
+            .collect()
+    }
+
     /// Get tool definitions excluding specific tools by name.
     ///
     /// Used by lightweight routines to filter out denylisted and approval-gated tools
@@ -330,8 +375,21 @@ impl ToolRegistry {
         self.register_sync(Arc::new(WriteFileTool::new()));
         self.register_sync(Arc::new(ListDirTool::new()));
         self.register_sync(Arc::new(ApplyPatchTool::new()));
+        self.register_sync(Arc::new(CodeEditTool::new()));
+        self.register_sync(Arc::new(GrepSearchTool::new()));
+        self.register_sync(Arc::new(GlobSearchTool::new()));
+        self.register_sync(Arc::new(GitStatusTool::new()));
+        self.register_sync(Arc::new(GitDiffTool::new()));
+        self.register_sync(Arc::new(GitLogTool::new()));
+        self.register_sync(Arc::new(GitCommitTool::new()));
+        self.register_sync(Arc::new(GitBranchTool::new()));
+        self.register_sync(Arc::new(GitPushTool::new()));
 
-        tracing::debug!("Registered 5 development tools");
+        // LSP code intelligence
+        let lsp_registry = Arc::new(crate::tools::builtin::lsp::LspRegistry::new());
+        self.register_sync(Arc::new(LspQueryTool::new(lsp_registry)));
+
+        tracing::debug!("Registered 15 development tools");
     }
 
     /// Register memory tools with a workspace resolver.

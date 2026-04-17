@@ -15,11 +15,13 @@
 mod log;
 mod multi;
 mod noop;
+pub mod prompt_cache;
 pub mod traits;
 
 pub use self::log::LogObserver;
 pub use self::multi::MultiObserver;
 pub use self::noop::NoopObserver;
+pub use self::prompt_cache::{PromptCacheMonitor, PromptCacheSnapshot};
 pub use self::traits::{Observer, ObserverEvent, ObserverMetric};
 
 /// Configuration for the observability backend.

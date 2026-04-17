@@ -197,6 +197,8 @@ pub struct AgentDeps {
     pub llm_backend: String,
     /// Per-tenant rate limiting registry (lazily creates rate state per user).
     pub tenant_rates: Arc<crate::tenant::TenantRateRegistry>,
+    /// Prompt cache hit/miss monitor (None = disabled).
+    pub cache_monitor: Option<Arc<crate::observability::PromptCacheMonitor>>,
 }
 
 /// The main agent that coordinates all components.

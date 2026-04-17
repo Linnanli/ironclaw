@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::llm::recording::HttpInterceptor;
+use crate::tools::feature_flags::{SharedFeatureFlags, ToolFeatureFlags};
 
 /// Error returned when a job exceeds its token budget.
 #[derive(Debug, thiserror::Error)]
@@ -197,6 +198,12 @@ pub struct JobContext {
     /// as `__routine_last_name` for fallback recovery in routine tool chains.
     #[serde(skip)]
     pub tool_output_stash: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    /// Tool-level feature flags controlling which tools are enabled/disabled.
+    ///
+    /// Wrapped in `Arc` for cheap cloning (same pattern as `extra_env`).
+    /// Default: all tools enabled.
+    #[serde(skip)]
+    pub feature_flags: SharedFeatureFlags,
     /// User's preferred timezone (IANA name, e.g. "America/New_York"). Defaults to "UTC".
     pub user_timezone: String,
 }
@@ -239,6 +246,7 @@ impl JobContext {
             http_interceptor: None,
             metadata: serde_json::Value::Null,
             tool_output_stash: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+            feature_flags: Arc::new(ToolFeatureFlags::default()),
             user_timezone: "UTC".to_string(),
         }
     }
@@ -246,6 +254,12 @@ impl JobContext {
     /// Set the user timezone on this context.
     pub fn with_timezone(mut self, tz: impl Into<String>) -> Self {
         self.user_timezone = tz.into();
+        self
+    }
+
+    /// Set tool feature flags on this context.
+    pub fn with_feature_flags(mut self, flags: SharedFeatureFlags) -> Self {
+        self.feature_flags = flags;
         self
     }
 

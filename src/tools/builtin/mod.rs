@@ -1,8 +1,15 @@
 //! Built-in tools that come with the agent.
 
+pub mod bash_validator;
+mod code_edit;
 mod echo;
 pub mod extension_tools;
 mod file;
+pub mod file_guard;
+pub mod git;
+mod glob_search;
+mod grep_search;
+pub mod lsp;
 mod http;
 mod job;
 mod json;
@@ -23,6 +30,9 @@ pub use extension_tools::{
     ToolRemoveTool, ToolSearchTool, ToolUpgradeTool,
 };
 pub use file::{ApplyPatchTool, ListDirTool, ReadFileTool, WriteFileTool};
+pub use code_edit::CodeEditTool;
+pub use glob_search::GlobSearchTool;
+pub use grep_search::GrepSearchTool;
 pub use http::HttpTool;
 pub use job::{
     CancelJobTool, CreateJobTool, JobEventsTool, JobPromptTool, JobStatusTool, ListJobsTool,
@@ -41,6 +51,10 @@ pub use shell::ShellTool;
 pub use skill_tools::{SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool};
 pub use time::TimeTool;
 pub use tool_info::ToolInfoTool;
+pub use git::{
+    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
+};
+pub use lsp::LspQueryTool;
 mod html_converter;
 pub mod image_analyze;
 pub mod image_edit;

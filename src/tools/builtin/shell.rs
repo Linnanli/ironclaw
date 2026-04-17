@@ -59,6 +59,8 @@ use crate::tools::tool::{
     ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput, require_str,
 };
 
+use super::bash_validator;
+
 /// Maximum output size before truncation (64KB).
 const MAX_OUTPUT_SIZE: usize = 64 * 1024;
 
@@ -872,6 +874,13 @@ impl Tool for ShellTool {
         let workdir = params.get("workdir").and_then(|v| v.as_str());
         let timeout = params.get("timeout").and_then(|v| v.as_u64());
 
+        // Resolve workspace for Layer 2 semantic validation
+        let workspace = workdir
+            .map(PathBuf::from)
+            .or_else(|| self.working_dir.clone())
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let validation = bash_validator::validate(command, &workspace);
+
         let start = std::time::Instant::now();
         let (output, exit_code) = self
             .execute_command(command, workdir, timeout, &ctx.extra_env)
@@ -880,19 +889,33 @@ impl Tool for ShellTool {
 
         let sandboxed = self.sandbox.is_some();
 
-        let result = serde_json::json!({
+        let mut result = serde_json::json!({
             "output": output,
             "exit_code": exit_code,
             "success": exit_code == 0,
-            "sandboxed": sandboxed
+            "sandboxed": sandboxed,
+            "intent": validation.intent.to_string()
         });
+
+        if !validation.warnings.is_empty() {
+            let strs: Vec<String> = validation.warnings.iter()
+                .map(|w| format!("[{}] {}", w.stage, w.message))
+                .collect();
+            result["warnings"] = serde_json::json!(strs);
+        }
 
         Ok(ToolOutput::success(result, duration))
     }
 
     fn risk_level_for(&self, params: &serde_json::Value) -> RiskLevel {
         extract_command_param(params)
-            .map(|cmd| classify_command_risk(&cmd))
+            .map(|cmd| {
+                let pattern_risk = classify_command_risk(&cmd);
+                let semantic_risk = bash_validator::intent_to_risk_level(
+                    bash_validator::classify_intent(&cmd),
+                );
+                std::cmp::max(pattern_risk, semantic_risk)
+            })
             .unwrap_or(RiskLevel::Medium)
     }
 

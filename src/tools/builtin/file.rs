@@ -17,6 +17,8 @@ use crate::tools::tool::{
 };
 use crate::workspace::paths as ws_paths;
 
+use super::file_guard;
+
 /// Well-known workspace filenames that must go through memory_write, not write_file.
 ///
 /// If the LLM tries to write one of these via the filesystem tool we reject
@@ -44,8 +46,8 @@ fn is_workspace_path(path: &str) -> bool {
         || path.starts_with("context/")
 }
 
-/// Maximum file size for reading (1MB).
-const MAX_READ_SIZE: u64 = 1024 * 1024;
+/// Maximum file size for reading (10MB). Enforced by file_guard::check_size_limit.
+const MAX_READ_SIZE: u64 = 10 * 1024 * 1024;
 
 /// Maximum file size for writing (5MB).
 const MAX_WRITE_SIZE: usize = 5 * 1024 * 1024;
@@ -117,23 +119,30 @@ impl Tool for ReadFileTool {
 
         let path = validate_path(path_str, self.base_dir.as_deref())?;
 
-        // Check file size
-        let metadata = fs::metadata(&path)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Cannot access file: {}", e)))?;
+        // File size limit (10MB default)
+        file_guard::check_size_limit(&path, Some(MAX_READ_SIZE))?;
 
-        if metadata.len() > MAX_READ_SIZE {
-            return Err(ToolError::ExecutionFailed(format!(
-                "File too large ({} bytes). Maximum is {} bytes. Use offset/limit for partial reads.",
-                metadata.len(),
-                MAX_READ_SIZE
-            )));
+        // Read as raw bytes for binary detection
+        let raw = fs::read(&path)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Cannot read file: {}", e)))?;
+
+        // Binary file detection — return info instead of garbled output
+        if file_guard::is_binary(&raw) {
+            let result = serde_json::json!({
+                "content": "Binary file, cannot display. Use shell commands to inspect binary files.",
+                "binary": true,
+                "path": path.display().to_string(),
+                "size_bytes": raw.len()
+            });
+            return Ok(ToolOutput::success(result, start.elapsed()));
         }
 
-        // Read file
-        let content = fs::read_to_string(&path)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read file: {}", e)))?;
+        let content = String::from_utf8(raw).map_err(|_| {
+            ToolError::ExecutionFailed(
+                "File contains invalid UTF-8. It may be a binary file.".to_string(),
+            )
+        })?;
 
         // Apply offset and limit
         let lines: Vec<&str> = content.lines().collect();

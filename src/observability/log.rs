@@ -75,6 +75,20 @@ impl Observer for LogObserver {
             ObserverEvent::Error { component, message } => {
                 tracing::warn!(component, error = message.as_str(), "observer: error");
             }
+            ObserverEvent::PromptCache {
+                cache_read_tokens,
+                cache_creation_tokens,
+                total_input_tokens,
+                static_layer_changed,
+            } => {
+                tracing::info!(
+                    cache_read_tokens,
+                    cache_creation_tokens,
+                    total_input_tokens,
+                    static_layer_changed,
+                    "observer: prompt_cache"
+                );
+            }
         }
     }
 
@@ -94,6 +108,12 @@ impl Observer for LogObserver {
             }
             ObserverMetric::QueueDepth(n) => {
                 tracing::debug!(queue_depth = n, "observer: metric.queue_depth");
+            }
+            ObserverMetric::PromptCacheHitRate(rate) => {
+                tracing::info!(
+                    hit_rate_pct = format!("{:.1}", rate * 100.0),
+                    "observer: metric.prompt_cache_hit_rate"
+                );
             }
         }
     }
