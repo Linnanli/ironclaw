@@ -18,7 +18,7 @@ use crate::tools::builder::{
 };
 use crate::tools::builtin::{
     ApplyPatchTool, CancelJobTool, CodeEditTool, CreateJobTool, EchoTool, ExtensionInfoTool,
-    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
+    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool, GitStatusTool,
     GlobSearchTool, GrepSearchTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool,
     JsonTool, ListDirTool, ListJobsTool, LspQueryTool, MemoryReadTool, MemorySearchTool,
     MemoryTreeTool, MemoryWriteTool, PlanModeTool, PromptQueue, ReadFileTool, SessionForkTool,
@@ -385,6 +385,7 @@ impl ToolRegistry {
         self.register_sync(Arc::new(GitCommitTool::new()));
         self.register_sync(Arc::new(GitBranchTool::new()));
         self.register_sync(Arc::new(GitPushTool::new()));
+        self.register_sync(Arc::new(GitStaleCheckTool::new()));
 
         // LSP code intelligence
         let lsp_registry = Arc::new(crate::tools::builtin::lsp::LspRegistry::new());

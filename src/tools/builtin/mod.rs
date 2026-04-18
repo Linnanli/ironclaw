@@ -55,7 +55,8 @@ pub use skill_tools::{SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSea
 pub use time::TimeTool;
 pub use tool_info::ToolInfoTool;
 pub use git::{
-    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStatusTool,
+    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool,
+    GitStatusTool,
 };
 pub use lsp::LspQueryTool;
 pub use plan_mode::PlanModeTool;

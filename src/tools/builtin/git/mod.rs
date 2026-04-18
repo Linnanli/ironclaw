@@ -10,6 +10,7 @@
 //! | git_branch      | Medium | UnlessAutoApproved|
 //! | git_commit      | Medium | UnlessAutoApproved|
 //! | git_push        | High   | Always            |
+//! | git_stale_check | Low    | Never             |
 
 mod runner;
 mod status;
@@ -18,6 +19,7 @@ mod log;
 mod commit;
 mod branch;
 mod push;
+mod stale;
 
 pub use status::GitStatusTool;
 pub use diff::GitDiffTool;
@@ -25,3 +27,4 @@ pub use log::GitLogTool;
 pub use commit::GitCommitTool;
 pub use branch::GitBranchTool;
 pub use push::GitPushTool;
+pub use stale::GitStaleCheckTool;
