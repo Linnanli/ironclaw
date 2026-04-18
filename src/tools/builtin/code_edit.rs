@@ -11,7 +11,9 @@ use async_trait::async_trait;
 use tokio::fs;
 
 use crate::context::JobContext;
-use crate::tools::builtin::path_utils::validate_path;
+use crate::tools::builtin::path_utils::{
+    AccessMode, PathPolicy, validate_path_with_policy,
+};
 use crate::tools::tool::{
     ApprovalRequirement, Tool, ToolDomain, ToolError, ToolOutput, require_str,
 };
@@ -28,6 +30,7 @@ const DIFF_CONTEXT_LINES: usize = 3;
 #[derive(Debug, Default)]
 pub struct CodeEditTool {
     base_dir: Option<PathBuf>,
+    policy: Option<PathPolicy>,
 }
 
 impl CodeEditTool {
@@ -37,6 +40,11 @@ impl CodeEditTool {
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_policy(mut self, policy: PathPolicy) -> Self {
+        self.policy = Some(policy);
         self
     }
 }
@@ -82,7 +90,7 @@ impl Tool for CodeEditTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let path_str = require_str(&params, "file_path")?;
         let old_string = require_str(&params, "old_string")?;
@@ -90,7 +98,13 @@ impl Tool for CodeEditTool {
         let expected_count = params.get("expected_count").and_then(|v| v.as_u64());
 
         let start = std::time::Instant::now();
-        let path = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let path = validate_path_with_policy(
+            path_str,
+            effective.as_deref(),
+            self.policy.as_ref(),
+            AccessMode::Write,
+        )?;
 
         file_guard::check_size_limit(&path, Some(MAX_EDIT_SIZE))?;
 

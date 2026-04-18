@@ -52,6 +52,35 @@ jobs:
           timeout --signal=INT --kill-after=30s 40m \
             cargo test ${{ matrix.flags }} -- --nocapture
 
+  parity-harness:
+    name: Parity Harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: parity-harness
+      - name: Run Parity Harness (50 scenarios)
+        run: |
+          cargo test -p ironclaw --test parity_harness -- --nocapture
+      - name: Generate Parity Report
+        if: always()
+        run: |
+          ./scripts/parity-report.sh -o parity-report.json
+          cat parity-report.json
+      - name: Upload Parity Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-report
+          path: parity-report.json
+
   heavy-integration-tests:
     name: Heavy Integration Tests
     runs-on: ubuntu-latest
@@ -206,7 +235,7 @@ jobs:
     name: Run Tests
     runs-on: ubuntu-latest
     if: always()
-    needs: [tests, heavy-integration-tests, telegram-tests, wasm-wit-compat, docker-build, windows-build, version-check, bench-compile]
+    needs: [tests, heavy-integration-tests, parity-harness, telegram-tests, wasm-wit-compat, docker-build, windows-build, version-check, bench-compile]
     steps:
       - run: |
           # Unit tests must always pass
@@ -216,6 +245,10 @@ jobs:
           fi
           if [[ "${{ needs.heavy-integration-tests.result }}" != "success" ]]; then
             echo "Heavy integration tests failed"
+            exit 1
+          fi
+          if [[ "${{ needs.parity-harness.result }}" != "success" ]]; then
+            echo "Parity harness tests failed"
             exit 1
           fi
           # Gated jobs: must pass on promotion PRs / push, skipped on developer PRs

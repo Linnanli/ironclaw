@@ -75,7 +75,7 @@ impl Tool for GlobSearchTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let start = std::time::Instant::now();
 
@@ -88,7 +88,8 @@ impl Tool for GlobSearchTool {
             .unwrap_or(DEFAULT_MAX_RESULTS)
             .min(HARD_MAX_RESULTS);
 
-        let search_root = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let search_root = validate_path(path_str, effective.as_deref())?;
 
         let matcher = compile_glob(pattern)?;
         let mut results = Vec::new();

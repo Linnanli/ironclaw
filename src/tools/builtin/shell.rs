@@ -874,8 +874,14 @@ impl Tool for ShellTool {
         let workdir = params.get("workdir").and_then(|v| v.as_str());
         let timeout = params.get("timeout").and_then(|v| v.as_u64());
 
+        // Resolve effective workdir: param > self.working_dir > ctx workspace_root > cwd.
+        // When no explicit workdir is set, fall back to the per-conversation
+        // workspace_root so shell commands run inside the sandbox.
+        let ctx_workspace = ctx.metadata.get("workspace_root").and_then(|v| v.as_str());
+        let effective_workdir = workdir.or(ctx_workspace);
+
         // Resolve workspace for Layer 2 semantic validation
-        let workspace = workdir
+        let workspace = effective_workdir
             .map(PathBuf::from)
             .or_else(|| self.working_dir.clone())
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
@@ -883,7 +889,7 @@ impl Tool for ShellTool {
 
         let start = std::time::Instant::now();
         let (output, exit_code) = self
-            .execute_command(command, workdir, timeout, &ctx.extra_env)
+            .execute_command(command, effective_workdir, timeout, &ctx.extra_env)
             .await?;
         let duration = start.elapsed();
 

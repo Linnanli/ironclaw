@@ -78,8 +78,9 @@ pub mod util;
 pub mod webhooks;
 pub mod worker;
 pub mod workspace;
+pub mod workspace_dir;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub mod testing;
 
 pub use config::Config;

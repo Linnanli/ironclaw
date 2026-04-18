@@ -97,6 +97,7 @@ serde_yml = "0.0.12"
 # Filesystem paths
 dirs = "6"
 fs4 = "0.6"
+globset = "0.4"
 
 # Semantic versioning
 semver = "1"
@@ -168,6 +169,9 @@ hex = "0.4.3"
 # OpenClaw import (feature gated)
 json5 = { version = "0.4", optional = true }
 
+# Test support (feature gated)
+tempfile = { version = "3", optional = true }
+
 # macOS keychain
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3"
@@ -182,6 +186,7 @@ secret-service = { version = "4", features = ["rt-tokio-crypto-rust"] }
 zbus = "4"
 
 [dev-dependencies]
+ironclaw = { path = ".", features = ["test-support"] }
 tokio-test = "0.4"
 tracing-test = "0.2"
 testcontainers-modules = { version = "0.11", features = ["postgres"] }
@@ -200,6 +205,7 @@ harness = false
 
 [features]
 default = ["postgres", "libsql", "html-to-markdown"]
+test-support = ["dep:tempfile"]
 postgres = [
     "dep:deadpool-postgres",
     "dep:tokio-postgres",

@@ -148,6 +148,34 @@ pub(crate) fn chat_tool_execution_metadata(message: &IncomingMessage) -> serde_j
     })
 }
 
+/// Enrich `job_ctx.metadata` with `workspace_root` from conversation metadata.
+///
+/// Reads the persisted conversation metadata from the database and merges the
+/// `workspace_root` field (if present) into the existing job context metadata.
+/// This allows all tools to read `ctx.metadata["workspace_root"]` at runtime
+/// without needing a compile-time `base_dir`.
+pub(crate) async fn enrich_workspace_root(
+    job_ctx: &mut crate::context::JobContext,
+    store: Option<&std::sync::Arc<dyn crate::db::Database>>,
+) {
+    let Some(store) = store else { return };
+    let Some(conv_id) = job_ctx.conversation_id else { return };
+
+    match store.get_conversation_metadata(conv_id).await {
+        Ok(Some(meta)) => {
+            if let Some(ws) = meta.get("workspace_root").and_then(|v| v.as_str()) {
+                if let Some(obj) = job_ctx.metadata.as_object_mut() {
+                    obj.insert("workspace_root".to_string(), serde_json::Value::String(ws.to_string()));
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(conversation_id = %conv_id, error = %e, "Failed to read conversation metadata for workspace_root");
+        }
+    }
+}
+
 fn should_fallback_routine_notification(error: &ChannelError) -> bool {
     !matches!(error, ChannelError::MissingRoutingTarget { .. })
 }

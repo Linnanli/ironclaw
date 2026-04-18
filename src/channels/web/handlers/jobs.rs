@@ -431,8 +431,12 @@ pub async fn jobs_restart_handler(
                 .await
                 .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
+            #[allow(deprecated)]
             let mode = match store.get_sandbox_job_mode(old_job_id).await {
-                Ok(Some(m)) if m == "claude_code" => {
+                Ok(Some(m))
+                    if m == "claude_code"
+                        && crate::orchestrator::job_manager::JobMode::is_claude_code_bridge_enabled() =>
+                {
                     crate::orchestrator::job_manager::JobMode::ClaudeCode
                 }
                 _ => crate::orchestrator::job_manager::JobMode::Worker,

@@ -47,10 +47,10 @@ impl ImageAnalyzeTool {
 
     /// Read binary image bytes from filesystem.
     ///
-    /// Validates the path against the base directory sandbox to prevent
+    /// Validates the path against the given base directory sandbox to prevent
     /// path traversal attacks, then reads the file bytes.
-    async fn read_image_bytes(&self, image_path: &str) -> Result<Vec<u8>, ToolError> {
-        let resolved = validate_path(image_path, self.base_dir.as_deref())?;
+    async fn read_image_bytes(&self, image_path: &str, base: Option<&std::path::Path>) -> Result<Vec<u8>, ToolError> {
+        let resolved = validate_path(image_path, base)?;
 
         tokio::fs::read(&resolved)
             .await
@@ -93,7 +93,7 @@ impl Tool for ImageAnalyzeTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let start = std::time::Instant::now();
 
@@ -110,7 +110,8 @@ impl Tool for ImageAnalyzeTool {
             .unwrap_or("Describe this image in detail.");
 
         // Read binary image bytes directly from filesystem
-        let image_bytes = self.read_image_bytes(image_path).await?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let image_bytes = self.read_image_bytes(image_path, effective.as_deref()).await?;
         if image_bytes.is_empty() {
             return Err(ToolError::ExecutionFailed(
                 "Image file is empty".to_string(),
@@ -219,7 +220,7 @@ mod tests {
             Some(dir.path().to_path_buf()),
         );
 
-        let result = tool.read_image_bytes("../../etc/passwd").await;
+        let result = tool.read_image_bytes("../../etc/passwd", tool.base_dir.as_deref()).await;
         assert!(
             result.is_err(),
             "Should reject path traversal, got: {:?}",
@@ -237,7 +238,7 @@ mod tests {
             Some(dir.path().to_path_buf()),
         );
 
-        let result = tool.read_image_bytes("/etc/passwd").await;
+        let result = tool.read_image_bytes("/etc/passwd", tool.base_dir.as_deref()).await;
         assert!(
             result.is_err(),
             "Should reject absolute path outside sandbox, got: {:?}",

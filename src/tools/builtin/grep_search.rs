@@ -85,7 +85,7 @@ impl Tool for GrepSearchTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let start = std::time::Instant::now();
 
@@ -99,7 +99,8 @@ impl Tool for GrepSearchTool {
         let re = regex::Regex::new(pattern_str)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid regex: {}", e)))?;
 
-        let search_path = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let search_path = validate_path(path_str, effective.as_deref())?;
 
         let matches = if search_path.is_file() {
             search_file(&re, &search_path, ctx_before, ctx_after, max_results)?

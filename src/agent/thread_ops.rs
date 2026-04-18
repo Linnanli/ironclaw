@@ -1209,6 +1209,9 @@ impl Agent {
             job_ctx.http_interceptor = self.deps.http_interceptor.clone();
             job_ctx.metadata = crate::agent::agent_loop::chat_tool_execution_metadata(message);
             job_ctx.conversation_id = Some(thread_id);
+
+            // Enrich with workspace_root from conversation metadata.
+            crate::agent::agent_loop::enrich_workspace_root(&mut job_ctx, self.store()).await;
             // Prefer a valid timezone from the approval message, fall back to the
             // resolved timezone stored when the approval was originally requested.
             let tz_candidate = message

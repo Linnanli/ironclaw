@@ -211,6 +211,10 @@ impl Agent {
         // enabling the frontend to navigate back to this thread when the job completes.
         job_ctx.conversation_id = Some(thread_id);
 
+        // Enrich with workspace_root from conversation metadata so file/shell
+        // tools can resolve the correct working directory at runtime.
+        crate::agent::agent_loop::enrich_workspace_root(&mut job_ctx, self.store()).await;
+
         // Build system prompts once for this turn. Two variants: with tools
         // (normal iterations) and without (force_text final iteration).
         let initial_tool_defs = self.tools().tool_definitions().await;

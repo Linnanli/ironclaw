@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use tokio::fs;
 
 use crate::context::JobContext;
-use crate::tools::builtin::path_utils::validate_path;
+use crate::tools::builtin::path_utils::{AccessMode, PathPolicy, validate_path_with_policy};
 use crate::tools::tool::{
     ApprovalRequirement, Tool, ToolDomain, ToolError, ToolOutput, require_str,
 };
@@ -59,6 +59,7 @@ const MAX_DIR_ENTRIES: usize = 500;
 #[derive(Debug, Default)]
 pub struct ReadFileTool {
     base_dir: Option<PathBuf>,
+    policy: Option<PathPolicy>,
 }
 
 impl ReadFileTool {
@@ -68,6 +69,11 @@ impl ReadFileTool {
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_policy(mut self, policy: PathPolicy) -> Self {
+        self.policy = Some(policy);
         self
     }
 }
@@ -108,7 +114,7 @@ impl Tool for ReadFileTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let path_str = require_str(&params, "path")?;
 
@@ -117,7 +123,13 @@ impl Tool for ReadFileTool {
 
         let start = std::time::Instant::now();
 
-        let path = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let path = validate_path_with_policy(
+            path_str,
+            effective.as_deref(),
+            self.policy.as_ref(),
+            AccessMode::Read,
+        )?;
 
         // File size limit (10MB default)
         file_guard::check_size_limit(&path, Some(MAX_READ_SIZE))?;
@@ -192,6 +204,7 @@ impl Tool for ReadFileTool {
 #[derive(Debug, Default)]
 pub struct WriteFileTool {
     base_dir: Option<PathBuf>,
+    policy: Option<PathPolicy>,
 }
 
 impl WriteFileTool {
@@ -201,6 +214,11 @@ impl WriteFileTool {
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_policy(mut self, policy: PathPolicy) -> Self {
+        self.policy = Some(policy);
         self
     }
 }
@@ -237,7 +255,7 @@ impl Tool for WriteFileTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let path_str = require_str(&params, "path")?;
 
@@ -263,7 +281,13 @@ impl Tool for WriteFileTool {
             )));
         }
 
-        let path = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let path = validate_path_with_policy(
+            path_str,
+            effective.as_deref(),
+            self.policy.as_ref(),
+            AccessMode::Write,
+        )?;
 
         // Create parent directories
         if let Some(parent) = path.parent() {
@@ -307,6 +331,7 @@ impl Tool for WriteFileTool {
 #[derive(Debug, Default)]
 pub struct ListDirTool {
     base_dir: Option<PathBuf>,
+    policy: Option<PathPolicy>,
 }
 
 impl ListDirTool {
@@ -316,6 +341,11 @@ impl ListDirTool {
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_policy(mut self, policy: PathPolicy) -> Self {
+        self.policy = Some(policy);
         self
     }
 }
@@ -355,7 +385,7 @@ impl Tool for ListDirTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let path_str = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
 
@@ -371,7 +401,13 @@ impl Tool for ListDirTool {
 
         let start = std::time::Instant::now();
 
-        let path = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let path = validate_path_with_policy(
+            path_str,
+            effective.as_deref(),
+            self.policy.as_ref(),
+            AccessMode::Read,
+        )?;
 
         let mut entries = Vec::new();
         list_dir_inner(&path, &path, recursive, max_depth, 0, &mut entries).await?;
@@ -500,6 +536,7 @@ fn format_size(bytes: u64) -> String {
 #[derive(Debug, Default)]
 pub struct ApplyPatchTool {
     base_dir: Option<PathBuf>,
+    policy: Option<PathPolicy>,
 }
 
 impl ApplyPatchTool {
@@ -509,6 +546,11 @@ impl ApplyPatchTool {
 
     pub fn with_base_dir(mut self, dir: PathBuf) -> Self {
         self.base_dir = Some(dir);
+        self
+    }
+
+    pub fn with_policy(mut self, policy: PathPolicy) -> Self {
+        self.policy = Some(policy);
         self
     }
 }
@@ -553,7 +595,7 @@ impl Tool for ApplyPatchTool {
     async fn execute(
         &self,
         params: serde_json::Value,
-        _ctx: &JobContext,
+        ctx: &JobContext,
     ) -> Result<ToolOutput, ToolError> {
         let path_str = require_str(&params, "path")?;
 
@@ -568,7 +610,13 @@ impl Tool for ApplyPatchTool {
 
         let start = std::time::Instant::now();
 
-        let path = validate_path(path_str, self.base_dir.as_deref())?;
+        let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
+        let path = validate_path_with_policy(
+            path_str,
+            effective.as_deref(),
+            self.policy.as_ref(),
+            AccessMode::Write,
+        )?;
 
         // Read current content
         let content = fs::read_to_string(&path)
@@ -631,7 +679,7 @@ impl Tool for ApplyPatchTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::builtin::path_utils::normalize_lexical;
+    use crate::tools::builtin::path_utils::{normalize_lexical, validate_path};
     use tempfile::TempDir;
 
     #[tokio::test]

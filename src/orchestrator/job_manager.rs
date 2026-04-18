@@ -22,6 +22,10 @@ pub enum JobMode {
     /// Standard IronClaw worker with proxied LLM calls.
     Worker,
     /// Claude Code bridge that spawns the `claude` CLI directly.
+    ///
+    /// **Deprecated since P3**: all Claude Code capabilities are now available
+    /// natively. Set `CLAUDE_CODE_BRIDGE_ENABLED=true` to re-enable.
+    #[deprecated(note = "Use JobMode::Worker — Claude Code bridge is superseded by native ironclaw capabilities")]
     ClaudeCode,
     /// Lightweight sub-agent with restricted tool access and depth limit.
     SubAgent {
@@ -36,6 +40,7 @@ pub enum JobMode {
     },
 }
 
+#[allow(deprecated)]
 impl JobMode {
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -43,6 +48,16 @@ impl JobMode {
             Self::ClaudeCode => "claude_code",
             Self::SubAgent { .. } => "sub_agent",
         }
+    }
+
+    /// Returns `true` if the Claude Code bridge is enabled via environment.
+    ///
+    /// Checks `CLAUDE_CODE_BRIDGE_ENABLED` (default: `false`).
+    /// When disabled, attempts to create `JobMode::ClaudeCode` jobs are rejected.
+    pub fn is_claude_code_bridge_enabled() -> bool {
+        std::env::var("CLAUDE_CODE_BRIDGE_ENABLED")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
     }
 }
 
@@ -227,6 +242,7 @@ pub struct ContainerJobManager {
     docker: Arc<RwLock<Option<bollard::Docker>>>,
 }
 
+#[allow(deprecated)]
 impl ContainerJobManager {
     pub fn new(config: ContainerJobConfig, token_store: TokenStore) -> Self {
         Self {
@@ -349,6 +365,7 @@ impl ContainerJobManager {
         //   1. ANTHROPIC_API_KEY: direct API key (pay-as-you-go billing).
         //   2. CLAUDE_CODE_OAUTH_TOKEN: OAuth access token from `claude login`
         //      session, extracted from the host's credential store.
+        #[allow(deprecated)]
         if mode == JobMode::ClaudeCode {
             if let Some(ref api_key) = self.config.claude_code_api_key {
                 env_vec.push(format!("ANTHROPIC_API_KEY={}", api_key));

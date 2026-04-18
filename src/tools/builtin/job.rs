@@ -427,6 +427,7 @@ impl CreateJobTool {
         });
 
         // Persist the job mode to DB
+        #[allow(deprecated)]
         if mode == JobMode::ClaudeCode
             && let Some(store) = self.store.clone()
         {
@@ -908,8 +909,18 @@ impl Tool for CreateJobTool {
         if self.sandbox_enabled() {
             let wait = params.get("wait").and_then(|v| v.as_bool()).unwrap_or(true);
 
+            #[allow(deprecated)]
             let mode = match params.get("mode").and_then(|v| v.as_str()) {
-                Some("claude_code") => JobMode::ClaudeCode,
+                Some("claude_code") if JobMode::is_claude_code_bridge_enabled() => {
+                    JobMode::ClaudeCode
+                }
+                Some("claude_code") => {
+                    return Err(ToolError::InvalidParameters(
+                        "Claude Code bridge is deprecated and disabled. \
+                         Set CLAUDE_CODE_BRIDGE_ENABLED=true to re-enable."
+                            .to_string(),
+                    ));
+                }
                 _ => JobMode::Worker,
             };
 
