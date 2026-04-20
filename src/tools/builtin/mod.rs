@@ -26,6 +26,8 @@ pub mod skill_tools;
 pub mod sub_agent;
 mod time;
 mod tool_info;
+mod web_fetch;
+mod web_search;
 
 pub use echo::EchoTool;
 pub use extension_tools::{
@@ -54,6 +56,8 @@ pub use shell::ShellTool;
 pub use skill_tools::{SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool};
 pub use time::TimeTool;
 pub use tool_info::ToolInfoTool;
+pub use web_fetch::WebFetchTool;
+pub use web_search::WebSearchTool;
 pub use git::{
     GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool,
     GitStatusTool,

@@ -868,6 +868,137 @@ Respond in JSON format:
         }
     }
 
+    /// Streaming variant of [`respond_with_tools`].
+    ///
+    /// Text delta chunks from the LLM are forwarded to `chunk_tx` as they
+    /// arrive, enabling token-level streaming to the frontend. The final
+    /// [`RespondOutput`] is still returned with the complete result so the
+    /// agentic loop can decide next steps.
+    ///
+    /// This method is only called when [`LlmProvider::supports_streaming`]
+    /// returns `true`. Providers that embed tool calls as XML in text content
+    /// (Ollama/Qwen3/GLM-4) must NOT use this path — they should keep using
+    /// [`respond_with_tools`] which runs `recover_tool_calls_from_content`.
+    pub async fn respond_with_tools_streaming(
+        &self,
+        context: &ReasoningContext,
+        chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<RespondOutput, LlmError> {
+        let system_prompt = match context.system_prompt {
+            Some(ref prompt) => prompt.clone(),
+            None => self.build_system_prompt_with_tools(&context.available_tools),
+        };
+        let system_prompt = merge_system_messages(system_prompt, &context.messages);
+        let mut messages = vec![ChatMessage::system(system_prompt)];
+        messages.extend(
+            context
+                .messages
+                .iter()
+                .filter(|m| m.role != Role::System)
+                .cloned(),
+        );
+
+        let effective_tools = if context.force_text {
+            Vec::new()
+        } else {
+            context.available_tools.clone()
+        };
+
+        if !effective_tools.is_empty() {
+            let mut request = ToolCompletionRequest::new(messages, effective_tools)
+                .with_max_tokens(4096)
+                .with_temperature(0.7)
+                .with_tool_choice("auto");
+            request.metadata = context.metadata.clone();
+            if let Some(ref model) = context.model_override {
+                request.model = Some(model.clone());
+            }
+
+            let response = self
+                .llm
+                .complete_with_tools_stream(request, chunk_tx)
+                .await?;
+
+            let usage = TokenUsage {
+                input_tokens: response.input_tokens,
+                output_tokens: response.output_tokens,
+                cache_read_input_tokens: response.cache_read_input_tokens,
+                cache_creation_input_tokens: response.cache_creation_input_tokens,
+            };
+
+            // Structured tool calls — streaming providers return these in
+            // the tool_calls field, so no XML recovery is needed.
+            if !response.tool_calls.is_empty() {
+                let narrative = response.content.map(|c| {
+                    let pre_truncated = truncate_at_tool_tags(&c);
+                    clean_response(&pre_truncated)
+                });
+                let tool_calls: Vec<ToolCall> = response
+                    .tool_calls
+                    .into_iter()
+                    .map(|mut tc| {
+                        if tc.reasoning.as_ref().is_none_or(|r| r.trim().is_empty()) {
+                            tc.reasoning =
+                                narrative.as_ref().filter(|n| !n.is_empty()).cloned();
+                        } else {
+                            tc.reasoning = tc
+                                .reasoning
+                                .map(|r| {
+                                    let pre_truncated = truncate_at_tool_tags(&r);
+                                    clean_response(&pre_truncated)
+                                })
+                                .filter(|r| !r.trim().is_empty());
+                        }
+                        tc
+                    })
+                    .collect();
+                return Ok(RespondOutput {
+                    result: RespondResult::ToolCalls {
+                        tool_calls,
+                        content: narrative,
+                    },
+                    usage,
+                    finish_reason: response.finish_reason,
+                    metadata: ResponseMetadata::default(),
+                });
+            }
+
+            // Pure text — chunks were already streamed via chunk_tx.
+            // Still clean the complete text for the final RespondOutput.
+            let content = response.content.unwrap_or_default();
+            let pre_truncated = truncate_at_tool_tags(&content);
+            let cleaned = clean_response(&pre_truncated);
+            let metadata = if cleaned.trim().is_empty() {
+                tracing::warn!(
+                    "Streaming LLM response was empty after cleaning (original len={}), using fallback",
+                    content.len()
+                );
+                ResponseMetadata {
+                    anomaly: Some(ResponseAnomaly::EmptyToolCompletion),
+                }
+            } else {
+                ResponseMetadata::default()
+            };
+            let final_text = if metadata.anomaly.is_some() {
+                "I'm not sure how to respond to that.".to_string()
+            } else {
+                cleaned
+            };
+            Ok(RespondOutput {
+                result: RespondResult::Text(final_text),
+                usage,
+                finish_reason: response.finish_reason,
+                metadata,
+            })
+        } else {
+            // No tools — use non-streaming simple completion (unchanged).
+            // (force_text mode or no tools available — streaming text-only
+            // completion can be added later if needed.)
+            drop(chunk_tx);
+            self.respond_with_tools(context).await
+        }
+    }
+
     fn build_planning_prompt(&self, context: &ReasoningContext) -> String {
         let tools_desc = if context.available_tools.is_empty() {
             "No tools available.".to_string()
@@ -3749,5 +3880,145 @@ That's my plan."#;
         let selections = reasoning.select_tools(&ctx).await.unwrap();
         assert_eq!(selections.len(), 1);
         assert_eq!(selections[0].tool_name, "memory_write");
+    }
+
+    // ---- Streaming tests ----
+
+    mod streaming_tests {
+        use super::*;
+        use crate::testing::StubLlm;
+        use async_trait::async_trait;
+
+        #[tokio::test]
+        async fn text_response_sends_chunk_via_tx() {
+            let llm = Arc::new(StubLlm::new("Hello from streaming"));
+            let reasoning = Reasoning::new(llm);
+            // Provide a tool so the streaming path (complete_with_tools_stream)
+            // is exercised instead of the no-tools fallback.
+            let context = ReasoningContext::new()
+                .with_message(ChatMessage::user("Hi"))
+                .with_tools(vec![ToolDefinition {
+                    name: "dummy".to_string(),
+                    description: "A dummy tool".to_string(),
+                    parameters: serde_json::json!({"type": "object"}),
+                }]);
+
+            let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let output = reasoning
+                .respond_with_tools_streaming(&context, chunk_tx)
+                .await
+                .unwrap();
+
+            // The default complete_with_tools_stream falls back to non-streaming
+            // and sends the full text as a single chunk.
+            let chunk = chunk_rx.try_recv().expect("should have received a chunk");
+            assert_eq!(chunk, "Hello from streaming");
+            assert!(chunk_rx.try_recv().is_err(), "should be no more chunks");
+
+            match output.result {
+                RespondResult::Text(text) => assert_eq!(text, "Hello from streaming"),
+                _ => panic!("expected Text result"),
+            }
+        }
+
+        #[tokio::test]
+        async fn force_text_drops_tx_and_uses_non_streaming() {
+            let llm = Arc::new(StubLlm::new("Forced text"));
+            let reasoning = Reasoning::new(llm);
+            let mut context = ReasoningContext::new().with_message(ChatMessage::user("Hi"));
+            context.force_text = true;
+
+            let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let output = reasoning
+                .respond_with_tools_streaming(&context, chunk_tx)
+                .await
+                .unwrap();
+
+            // force_text path drops chunk_tx and uses non-streaming.
+            // The receiver should be closed (no chunks sent).
+            assert!(chunk_rx.try_recv().is_err());
+
+            match output.result {
+                RespondResult::Text(text) => assert_eq!(text, "Forced text"),
+                _ => panic!("expected Text result"),
+            }
+        }
+
+        #[tokio::test]
+        async fn tool_calls_returned_without_streaming_text() {
+            use crate::llm::{LlmError, ToolCall, ToolCompletionRequest, ToolCompletionResponse};
+            use rust_decimal::Decimal;
+
+            struct ToolCallLlm;
+
+            #[async_trait]
+            impl LlmProvider for ToolCallLlm {
+                fn model_name(&self) -> &str {
+                    "tool-call-llm"
+                }
+                fn cost_per_token(&self) -> (Decimal, Decimal) {
+                    (Decimal::ZERO, Decimal::ZERO)
+                }
+                async fn complete(
+                    &self,
+                    _req: crate::llm::CompletionRequest,
+                ) -> Result<crate::llm::CompletionResponse, LlmError> {
+                    unreachable!()
+                }
+                async fn complete_with_tools(
+                    &self,
+                    _req: ToolCompletionRequest,
+                ) -> Result<ToolCompletionResponse, LlmError> {
+                    Ok(ToolCompletionResponse {
+                        content: Some("I'll search for that.".to_string()),
+                        tool_calls: vec![ToolCall {
+                            id: "tc_1".to_string(),
+                            name: "web_search".to_string(),
+                            arguments: serde_json::json!({"q": "rust"}),
+                            reasoning: None,
+                        }],
+                        input_tokens: 10,
+                        output_tokens: 5,
+                        finish_reason: FinishReason::ToolUse,
+                        cache_read_input_tokens: 0,
+                        cache_creation_input_tokens: 0,
+                    })
+                }
+            }
+
+            let llm = Arc::new(ToolCallLlm);
+            let reasoning = Reasoning::new(llm);
+            let context = ReasoningContext::new()
+                .with_message(ChatMessage::user("search rust"))
+                .with_tools(vec![ToolDefinition {
+                    name: "web_search".to_string(),
+                    description: "Search the web".to_string(),
+                    parameters: serde_json::json!({"type": "object"}),
+                }]);
+
+            let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+            let output = reasoning
+                .respond_with_tools_streaming(&context, chunk_tx)
+                .await
+                .unwrap();
+
+            // Tool calls: the default complete_with_tools_stream sends full
+            // text as one chunk (narrative), then returns tool_calls.
+            let _chunk = chunk_rx.try_recv().expect("narrative chunk expected");
+
+            match output.result {
+                RespondResult::ToolCalls { tool_calls, .. } => {
+                    assert_eq!(tool_calls.len(), 1);
+                    assert_eq!(tool_calls[0].name, "web_search");
+                }
+                _ => panic!("expected ToolCalls result"),
+            }
+        }
+
+        #[tokio::test]
+        async fn supports_streaming_default_is_false() {
+            let llm = StubLlm::new("test");
+            assert!(!llm.supports_streaming());
+        }
     }
 }

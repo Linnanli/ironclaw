@@ -302,6 +302,18 @@ impl LlmProvider for CachedProvider {
     fn calculate_cost(&self, input_tokens: u32, output_tokens: u32) -> Decimal {
         self.inner.calculate_cost(input_tokens, output_tokens)
     }
+
+    fn supports_streaming(&self) -> bool {
+        self.inner.supports_streaming()
+    }
+
+    async fn complete_with_tools_stream(
+        &self,
+        request: ToolCompletionRequest,
+        chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<ToolCompletionResponse, LlmError> {
+        self.inner.complete_with_tools_stream(request, chunk_tx).await
+    }
 }
 
 #[cfg(test)]

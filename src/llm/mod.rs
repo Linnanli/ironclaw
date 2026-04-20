@@ -32,6 +32,7 @@ pub mod recording;
 pub mod registry;
 pub mod response_cache;
 pub mod retry;
+mod openai_streaming;
 mod rig_adapter;
 pub mod session;
 pub mod smart_routing;
@@ -353,10 +354,41 @@ fn create_openai_compat_from_registry(
         "Using OpenAI-compatible provider"
     );
 
+    // Build streaming config for direct HTTP SSE calls.
+    // This bypasses rig-core's non-streaming API for providers that
+    // support the OpenAI Chat Completions streaming protocol.
+    let streaming_config = {
+        let mut headers = reqwest::header::HeaderMap::new();
+        for (key, value) in &config.extra_headers {
+            if let (Ok(name), Ok(val)) = (
+                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
+                reqwest::header::HeaderValue::from_str(value),
+            ) {
+                headers.insert(name, val);
+            }
+        }
+        let http_client = reqwest::Client::builder()
+            .default_headers(headers)
+            .build()
+            .map_err(|e| LlmError::RequestFailed {
+                provider: config.provider_id.clone(),
+                reason: format!("Failed to build streaming HTTP client: {e}"),
+            })?;
+        openai_streaming::StreamingConfig {
+            client: http_client,
+            base_url: config.base_url.clone(),
+            api_key: config
+                .api_key
+                .clone()
+                .unwrap_or_else(|| secrecy::SecretString::from("no-key".to_string())),
+        }
+    };
+
     let adapter = RigAdapter::new(model, &config.model)
         .with_unsupported_params(config.unsupported_params.clone())
         .with_strict_tools_schema(config.strict_tools_schema)
-        .with_model_factory(model_factory);
+        .with_model_factory(model_factory)
+        .with_streaming_config(streaming_config);
     Ok(Arc::new(adapter))
 }
 

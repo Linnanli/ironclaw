@@ -50,6 +50,8 @@ pub struct RigAdapter<M: CompletionModel> {
     model_factory: Option<Arc<dyn Fn(&str) -> M + Send + Sync>>,
     /// Whether to apply OpenAI strict-mode normalization to tool schemas.
     strict_tools_schema: bool,
+    /// Direct HTTP streaming config (bypasses rig-core).
+    streaming_config: Option<super::openai_streaming::StreamingConfig>,
 }
 
 impl<M: CompletionModel> RigAdapter<M> {
@@ -68,6 +70,7 @@ impl<M: CompletionModel> RigAdapter<M> {
             unsupported_params: HashSet::new(),
             model_factory: None,
             strict_tools_schema: true,
+            streaming_config: None,
         }
     }
 
@@ -125,6 +128,19 @@ impl<M: CompletionModel> RigAdapter<M> {
     /// GLM) reject these extensions with HTTP 400.
     pub fn with_strict_tools_schema(mut self, strict: bool) -> Self {
         self.strict_tools_schema = strict;
+        self
+    }
+
+    /// Set streaming configuration for direct HTTP SSE calls.
+    ///
+    /// When set, `supports_streaming()` returns `true` and
+    /// `complete_with_tools_stream()` uses direct reqwest SSE instead
+    /// of the rig-core non-streaming path.
+    pub(crate) fn with_streaming_config(
+        mut self,
+        config: super::openai_streaming::StreamingConfig,
+    ) -> Self {
+        self.streaming_config = Some(config);
         self
     }
 
@@ -854,6 +870,60 @@ where
                 "prompt cache hit",
             );
         }
+
+        Ok(resp)
+    }
+
+    fn supports_streaming(&self) -> bool {
+        self.streaming_config.is_some()
+    }
+
+    async fn complete_with_tools_stream(
+        &self,
+        mut request: ToolCompletionRequest,
+        chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<ToolCompletionResponse, LlmError> {
+        let config = match &self.streaming_config {
+            Some(c) => c,
+            None => {
+                // Fall back to non-streaming default.
+                let resp = self.complete_with_tools(request).await?;
+                if let Some(ref content) = resp.content {
+                    let _ = chunk_tx.send(content.clone());
+                }
+                return Ok(resp);
+            }
+        };
+
+        let model_override = request.model.take();
+        self.strip_unsupported_tool_params(&mut request);
+
+        let current = self.current_model_name();
+        let model_name = model_override.as_deref().unwrap_or(&current);
+
+        tracing::info!(
+            model = %model_name,
+            msg_count = request.messages.len(),
+            tool_count = request.tools.len(),
+            "LLM streaming request",
+        );
+
+        let resp = super::openai_streaming::stream_chat_completion(
+            config,
+            &request,
+            model_name,
+            self.strict_tools_schema,
+            chunk_tx,
+        )
+        .await?;
+
+        tracing::info!(
+            model = %model_name,
+            input = resp.input_tokens,
+            output = resp.output_tokens,
+            tool_calls = resp.tool_calls.len(),
+            "LLM streaming response complete",
+        );
 
         Ok(resp)
     }

@@ -215,6 +215,16 @@ impl Agent {
         // tools can resolve the correct working directory at runtime.
         crate::agent::agent_loop::enrich_workspace_root(&mut job_ctx, self.store()).await;
 
+        // Inject workspace_root into the system prompt so the agent knows the
+        // current working directory without having to run `pwd`.
+        if let Some(ws_root) = job_ctx
+            .metadata
+            .get("workspace_root")
+            .and_then(|v| v.as_str())
+        {
+            reasoning = reasoning.with_conversation_data("Workspace", ws_root);
+        }
+
         // Build system prompts once for this turn. Two variants: with tools
         // (normal iterations) and without (force_text final iteration).
         let initial_tool_defs = self.tools().tool_definitions().await;
@@ -439,38 +449,13 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
             }
         }
 
-        let output = match reasoning.respond_with_tools(reason_ctx).await {
-            Ok(output) => output,
-            Err(crate::error::LlmError::ContextLengthExceeded { used, limit }) => {
-                tracing::warn!(
-                    used,
-                    limit,
-                    iteration,
-                    "Context length exceeded, compacting messages and retrying"
-                );
-
-                // Compact messages in place and retry
-                reason_ctx.messages = compact_messages_for_retry(&reason_ctx.messages);
-
-                // When force_text, clear tools to further reduce token count
-                if reason_ctx.force_text {
-                    reason_ctx.available_tools.clear();
-                }
-
-                reasoning
-                    .respond_with_tools(reason_ctx)
-                    .await
-                    .map_err(|retry_err| {
-                        tracing::error!(
-                            original_used = used,
-                            original_limit = limit,
-                            retry_error = %retry_err,
-                            "Retry after auto-compaction also failed"
-                        );
-                        crate::error::Error::from(retry_err)
-                    })?
-            }
-            Err(e) => return Err(e.into()),
+        let use_streaming = self.agent.llm().supports_streaming();
+        let output = if use_streaming {
+            self.call_llm_streaming(reasoning, reason_ctx, iteration)
+                .await?
+        } else {
+            self.call_llm_non_streaming(reasoning, reason_ctx, iteration)
+                .await?
         };
 
         // Record cost and track token usage (global + per-user).
@@ -836,6 +821,11 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
 
         if runnable.len() <= 1 {
             for (pf_idx, tc) in &runnable {
+                let tool_meta = crate::channels::tool_enriched_metadata(
+                    &self.message.metadata,
+                    &tc.id,
+                    Some(&tc.arguments),
+                );
                 let _ = self
                     .agent
                     .channels
@@ -844,7 +834,7 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                         StatusUpdate::ToolStarted {
                             name: tc.name.clone(),
                         },
-                        &self.message.metadata,
+                        &tool_meta,
                     )
                     .await;
 
@@ -865,7 +855,7 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                             &tc.arguments,
                             disp_tool.as_deref(),
                         ),
-                        &self.message.metadata,
+                        &tool_meta,
                     )
                     .await;
 
@@ -882,7 +872,11 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                 let job_ctx = self.job_ctx.clone();
                 let tc = tc.clone();
                 let channel = self.message.channel.clone();
-                let metadata = self.message.metadata.clone();
+                let metadata = crate::channels::tool_enriched_metadata(
+                    &self.message.metadata,
+                    &tc.id,
+                    Some(&tc.arguments),
+                );
 
                 join_set.spawn(async move {
                     let _ = channels
@@ -1029,6 +1023,11 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                         && let Ok(ref output) = tool_result
                         && !output.is_empty()
                     {
+                        let result_meta = crate::channels::tool_enriched_metadata(
+                            &self.message.metadata,
+                            &tc.id,
+                            None,
+                        );
                         let _ = self
                             .agent
                             .channels
@@ -1038,7 +1037,7 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
                                     name: tc.name.clone(),
                                     preview: output.clone(),
                                 },
-                                &self.message.metadata,
+                                &result_meta,
                             )
                             .await;
                     }
@@ -1136,6 +1135,115 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
         }
 
         Ok(None)
+    }
+}
+
+// ── Private helpers for ChatDelegate ────────────────────────────────────
+
+impl<'a> ChatDelegate<'a> {
+    /// Non-streaming LLM call with context-exceeded retry.
+    async fn call_llm_non_streaming(
+        &self,
+        reasoning: &Reasoning,
+        reason_ctx: &mut ReasoningContext,
+        iteration: usize,
+    ) -> Result<crate::llm::RespondOutput, Error> {
+        match reasoning.respond_with_tools(reason_ctx).await {
+            Ok(output) => Ok(output),
+            Err(crate::error::LlmError::ContextLengthExceeded { used, limit }) => {
+                tracing::warn!(
+                    used,
+                    limit,
+                    iteration,
+                    "Context length exceeded, compacting messages and retrying"
+                );
+                reason_ctx.messages = compact_messages_for_retry(&reason_ctx.messages);
+                if reason_ctx.force_text {
+                    reason_ctx.available_tools.clear();
+                }
+                reasoning
+                    .respond_with_tools(reason_ctx)
+                    .await
+                    .map_err(|retry_err| {
+                        tracing::error!(
+                            original_used = used,
+                            original_limit = limit,
+                            retry_error = %retry_err,
+                            "Retry after auto-compaction also failed"
+                        );
+                        crate::error::Error::from(retry_err)
+                    })
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    /// Streaming LLM call: forwards text chunks to the channel while the
+    /// response is being generated, with context-exceeded retry fallback.
+    async fn call_llm_streaming(
+        &self,
+        reasoning: &Reasoning,
+        reason_ctx: &mut ReasoningContext,
+        iteration: usize,
+    ) -> Result<crate::llm::RespondOutput, Error> {
+        let (chunk_tx, mut chunk_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+
+        let channels = self.agent.channels.clone();
+        let channel_name = self.message.channel.clone();
+        let metadata = self.message.metadata.clone();
+
+        // Spawn a task that drains text chunks and forwards them as
+        // StatusUpdate::StreamChunk to the frontend.
+        let forward_handle = tokio::spawn(async move {
+            while let Some(chunk) = chunk_rx.recv().await {
+                let _ = channels
+                    .send_status(
+                        &channel_name,
+                        StatusUpdate::StreamChunk(chunk),
+                        &metadata,
+                    )
+                    .await;
+            }
+        });
+
+        let result = reasoning
+            .respond_with_tools_streaming(reason_ctx, chunk_tx)
+            .await;
+
+        // Wait for the forwarding task to finish draining queued chunks
+        // before returning to the caller.
+        let _ = forward_handle.await;
+
+        match result {
+            Ok(output) => Ok(output),
+            Err(crate::error::LlmError::ContextLengthExceeded { used, limit }) => {
+                tracing::warn!(
+                    used,
+                    limit,
+                    iteration,
+                    "Context length exceeded (streaming), compacting and retrying non-streaming"
+                );
+                reason_ctx.messages = compact_messages_for_retry(&reason_ctx.messages);
+                if reason_ctx.force_text {
+                    reason_ctx.available_tools.clear();
+                }
+                // Retry falls back to non-streaming to avoid creating another
+                // forwarding task for a likely-small compacted context.
+                reasoning
+                    .respond_with_tools(reason_ctx)
+                    .await
+                    .map_err(|retry_err| {
+                        tracing::error!(
+                            original_used = used,
+                            original_limit = limit,
+                            retry_error = %retry_err,
+                            "Retry after auto-compaction also failed (streaming)"
+                        );
+                        crate::error::Error::from(retry_err)
+                    })
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 }
 

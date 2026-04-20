@@ -439,6 +439,41 @@ pub trait LlmProvider: Send + Sync {
     fn cache_read_discount(&self) -> Decimal {
         Decimal::ONE
     }
+
+    /// Whether this provider supports streaming text chunks from the LLM API.
+    ///
+    /// When `true`, [`complete_with_tools_stream`](Self::complete_with_tools_stream)
+    /// sends text delta chunks via the provided sender while the response is
+    /// being generated, enabling token-level streaming to the frontend.
+    ///
+    /// Providers backed by structured streaming APIs (OpenAI, Anthropic, Bedrock)
+    /// should return `true`. Local-model providers (Ollama) that embed tool calls
+    /// as XML in text should return `false` — streaming would break tool-call
+    /// recovery which requires the full response.
+    fn supports_streaming(&self) -> bool {
+        false
+    }
+
+    /// Streaming variant of [`complete_with_tools`](Self::complete_with_tools).
+    ///
+    /// Text delta chunks are sent to `chunk_tx` as they arrive from the LLM.
+    /// The final [`ToolCompletionResponse`] is returned once the full response
+    /// is available (with all tool calls intact).
+    ///
+    /// Default implementation falls back to the non-streaming path and sends
+    /// the complete text as a single chunk.
+    async fn complete_with_tools_stream(
+        &self,
+        request: ToolCompletionRequest,
+        chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<ToolCompletionResponse, LlmError> {
+        let response = self.complete_with_tools(request).await?;
+        // Emit the full text as a single chunk for non-streaming providers.
+        if let Some(ref content) = response.content {
+            let _ = chunk_tx.send(content.clone());
+        }
+        Ok(response)
+    }
 }
 
 /// Sanitize a message list to ensure tool_use / tool_result integrity.

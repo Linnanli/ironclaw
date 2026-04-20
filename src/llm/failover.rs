@@ -379,6 +379,32 @@ impl LlmProvider for FailoverProvider {
 
         self.providers[self.last_used.load(Ordering::Relaxed)].effective_model_name(requested_model)
     }
+
+    fn supports_streaming(&self) -> bool {
+        self.providers
+            .first()
+            .is_some_and(|p| p.supports_streaming())
+    }
+
+    async fn complete_with_tools_stream(
+        &self,
+        request: ToolCompletionRequest,
+        chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
+    ) -> Result<ToolCompletionResponse, LlmError> {
+        // Streaming delegates to the first provider without failover.
+        // Retrying on a different provider after chunks have already been
+        // emitted would produce incoherent output.
+        if let Some(provider) = self.providers.first() {
+            provider
+                .complete_with_tools_stream(request, chunk_tx)
+                .await
+        } else {
+            Err(LlmError::RequestFailed {
+                provider: "failover".to_string(),
+                reason: "No providers configured".to_string(),
+            })
+        }
+    }
 }
 
 #[cfg(test)]

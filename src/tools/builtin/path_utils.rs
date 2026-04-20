@@ -19,13 +19,22 @@ pub fn effective_base_dir<'a>(
     tool_base_dir: Option<&'a Path>,
     ctx: &'a JobContext,
 ) -> Option<PathBuf> {
-    if tool_base_dir.is_some() {
-        return tool_base_dir.map(Path::to_path_buf);
+    if let Some(dir) = tool_base_dir {
+        return Some(dir.to_path_buf());
     }
-    ctx.metadata
+    let result = ctx
+        .metadata
         .get("workspace_root")
         .and_then(|v| v.as_str())
-        .map(PathBuf::from)
+        .map(PathBuf::from);
+    if result.is_none() {
+        tracing::warn!(
+            conversation_id = ?ctx.conversation_id,
+            metadata_keys = ?ctx.metadata.as_object().map(|o| o.keys().collect::<Vec<_>>()),
+            "No workspace_root in job context — file tools will reject relative paths"
+        );
+    }
+    result
 }
 
 /// Normalize a path by resolving `.` and `..` components lexically (no filesystem access).
@@ -123,10 +132,14 @@ pub fn validate_path(path_str: &str, base_dir: Option<&Path>) -> Result<PathBuf,
             .canonicalize()
             .unwrap_or_else(|_| normalize_lexical(&joined))
     } else {
-        let joined = std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(&path);
-        normalize_lexical(&joined)
+        // Relative path without a workspace — refuse instead of silently
+        // resolving against the process CWD, which is almost never the
+        // directory the user intended.
+        return Err(ToolError::ExecutionFailed(format!(
+            "Cannot resolve relative path '{}' — no workspace directory is set for this \
+             conversation. Please import a workspace first.",
+            path_str
+        )));
     };
 
     // If base_dir is set, ensure the resolved path is within it
@@ -704,5 +717,23 @@ mod tests {
         ctx.metadata = serde_json::json!({"workspace_root": "/ctx/workspace"});
         let result = effective_base_dir(Some(&tool_base), &ctx);
         assert_eq!(result, Some(PathBuf::from("/tool/base")));
+    }
+
+    #[test]
+    fn test_validate_path_rejects_relative_without_base() {
+        let result = validate_path("some/file.txt", None);
+        assert!(result.is_err(), "Relative path without base_dir should be rejected");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("workspace"), "Error message should mention workspace: {err_msg}");
+    }
+
+    #[test]
+    fn test_validate_path_allows_absolute_without_base() {
+        // Absolute paths don't need a base_dir to resolve
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("test.txt");
+        std::fs::write(&file, "data").unwrap();
+        let result = validate_path(file.to_str().unwrap(), None);
+        assert!(result.is_ok(), "Absolute path without base_dir should be allowed");
     }
 }

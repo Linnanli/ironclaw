@@ -24,7 +24,7 @@ use crate::tools::builtin::{
     MemoryTreeTool, MemoryWriteTool, PlanModeTool, PromptQueue, ReadFileTool, SessionForkTool,
     ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, SubAgentTool,
     TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool,
-    ToolSearchTool, ToolUpgradeTool, WriteFileTool,
+    ToolSearchTool, ToolUpgradeTool, WebFetchTool, WebSearchTool, WriteFileTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};
@@ -396,7 +396,11 @@ impl ToolRegistry {
         self.register_sync(Arc::new(SessionForkTool::new()));
         self.register_sync(Arc::new(SubAgentTool::new()));
 
-        tracing::debug!("Registered 18 development tools");
+        // Web tools: search (DuckDuckGo) + fetch (URL→text)
+        self.register_sync(Arc::new(WebSearchTool::new()));
+        self.register_sync(Arc::new(WebFetchTool::new()));
+
+        tracing::debug!("Registered 20 development tools");
     }
 
     /// Register memory tools with a workspace resolver.

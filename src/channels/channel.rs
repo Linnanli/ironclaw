@@ -389,6 +389,29 @@ impl StatusUpdate {
     }
 }
 
+/// Enrich channel metadata with tool-call information.
+///
+/// Returns a **clone** of `base` with `_tool_call_id` and (optionally)
+/// `_tool_arguments` inserted.  Other channels silently ignore the extra
+/// keys; `TauriChannel` extracts them to emit Vercel AI protocol events.
+pub fn tool_enriched_metadata(
+    base: &serde_json::Value,
+    tool_call_id: &str,
+    tool_arguments: Option<&serde_json::Value>,
+) -> serde_json::Value {
+    let mut meta = base.clone();
+    if let Some(obj) = meta.as_object_mut() {
+        obj.insert(
+            "_tool_call_id".to_string(),
+            serde_json::Value::String(tool_call_id.to_string()),
+        );
+        if let Some(args) = tool_arguments {
+            obj.insert("_tool_arguments".to_string(), args.clone());
+        }
+    }
+    meta
+}
+
 /// Trait for message channels.
 ///
 /// Channels receive messages from external sources and convert them to

@@ -928,6 +928,9 @@ impl Agent {
                     obj["tool_call_id"] =
                         serde_json::Value::String(truncate_preview(tool_call_id, 128));
                 }
+                if !tc.parameters.is_null() {
+                    obj["parameters"] = tc.parameters.clone();
+                }
                 obj
             })
             .collect();
@@ -1223,6 +1226,12 @@ impl Agent {
                 job_ctx.user_timezone = tz.to_string();
             }
 
+            let tool_meta = crate::channels::tool_enriched_metadata(
+                &message.metadata,
+                &pending.tool_call_id,
+                Some(&pending.parameters),
+            );
+
             let _ = self
                 .channels
                 .send_status(
@@ -1230,7 +1239,7 @@ impl Agent {
                     StatusUpdate::ToolStarted {
                         name: pending.tool_name.clone(),
                     },
-                    &message.metadata,
+                    &tool_meta,
                 )
                 .await;
 
@@ -1249,7 +1258,7 @@ impl Agent {
                         &pending.display_parameters,
                         tool_ref.as_deref(),
                     ),
-                    &message.metadata,
+                    &tool_meta,
                 )
                 .await;
 
@@ -1264,7 +1273,7 @@ impl Agent {
                             name: pending.tool_name.clone(),
                             preview: output.clone(),
                         },
-                        &message.metadata,
+                        &tool_meta,
                     )
                     .await;
             }
@@ -1387,6 +1396,11 @@ impl Agent {
                 // Single tool (or none): execute inline
                 let mut results = Vec::new();
                 for tc in &runnable {
+                    let tool_meta = crate::channels::tool_enriched_metadata(
+                        &message.metadata,
+                        &tc.id,
+                        Some(&tc.arguments),
+                    );
                     let _ = self
                         .channels
                         .send_status(
@@ -1394,7 +1408,7 @@ impl Agent {
                             StatusUpdate::ToolStarted {
                                 name: tc.name.clone(),
                             },
-                            &message.metadata,
+                            &tool_meta,
                         )
                         .await;
 
@@ -1413,7 +1427,7 @@ impl Agent {
                                 &tc.arguments,
                                 deferred_tool.as_deref(),
                             ),
-                            &message.metadata,
+                            &tool_meta,
                         )
                         .await;
 
@@ -1432,7 +1446,11 @@ impl Agent {
                     let job_ctx = job_ctx.clone();
                     let tc = tc.clone();
                     let channel = message.channel.clone();
-                    let metadata = message.metadata.clone();
+                    let metadata = crate::channels::tool_enriched_metadata(
+                        &message.metadata,
+                        &tc.id,
+                        Some(&tc.arguments),
+                    );
 
                     join_set.spawn(async move {
                         let _ = channels
@@ -1517,6 +1535,11 @@ impl Agent {
                 if let Ok(ref output) = deferred_result
                     && !output.is_empty()
                 {
+                    let result_meta = crate::channels::tool_enriched_metadata(
+                        &message.metadata,
+                        &tc.id,
+                        None,
+                    );
                     let _ = self
                         .channels
                         .send_status(
@@ -1525,7 +1548,7 @@ impl Agent {
                                 name: tc.name.clone(),
                                 preview: output.clone(),
                             },
-                            &message.metadata,
+                            &result_meta,
                         )
                         .await;
                 }

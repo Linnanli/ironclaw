@@ -158,18 +158,29 @@ pub(crate) async fn enrich_workspace_root(
     job_ctx: &mut crate::context::JobContext,
     store: Option<&std::sync::Arc<dyn crate::db::Database>>,
 ) {
-    let Some(store) = store else { return };
-    let Some(conv_id) = job_ctx.conversation_id else { return };
+    let Some(store) = store else {
+        tracing::warn!("enrich_workspace_root: no database store available");
+        return;
+    };
+    let Some(conv_id) = job_ctx.conversation_id else {
+        tracing::warn!("enrich_workspace_root: no conversation_id in job context");
+        return;
+    };
 
     match store.get_conversation_metadata(conv_id).await {
         Ok(Some(meta)) => {
             if let Some(ws) = meta.get("workspace_root").and_then(|v| v.as_str()) {
+                tracing::debug!(conversation_id = %conv_id, workspace_root = %ws, "Enriched workspace_root from DB");
                 if let Some(obj) = job_ctx.metadata.as_object_mut() {
                     obj.insert("workspace_root".to_string(), serde_json::Value::String(ws.to_string()));
                 }
+            } else {
+                tracing::warn!(conversation_id = %conv_id, metadata = ?meta, "Conversation metadata exists but has no workspace_root");
             }
         }
-        Ok(None) => {}
+        Ok(None) => {
+            tracing::warn!(conversation_id = %conv_id, "No metadata found for conversation");
+        }
         Err(e) => {
             tracing::warn!(conversation_id = %conv_id, error = %e, "Failed to read conversation metadata for workspace_root");
         }
@@ -1848,5 +1859,50 @@ mod tests {
         assert!(is_single_message_repl(&repl)); // safety: test-only assertion
         assert!(!is_single_message_repl(&gateway)); // safety: test-only assertion
         assert!(!is_single_message_repl(&plain_repl)); // safety: test-only assertion
+    }
+
+    // ── IPC 接缝契约测试 ────────────────────────────────────────
+
+    /// 验证 enrich_workspace_root 能正确将 DB 中的 workspace_root 注入 job_ctx.metadata，
+    /// 且 effective_base_dir 能读取它。
+    #[tokio::test]
+    async fn test_contract_workspace_chain_with_metadata() {
+        use crate::context::JobContext;
+        use crate::tools::builtin::path_utils::effective_base_dir;
+        use std::path::PathBuf;
+
+        let mut ctx = JobContext::with_user("u", "chat", "test");
+        ctx.metadata = serde_json::json!({
+            "notify_channel": "tauri",
+            "workspace_root": "/Users/test/project"
+        });
+        let result = effective_base_dir(None, &ctx);
+        assert_eq!(result, Some(PathBuf::from("/Users/test/project")));
+    }
+
+    /// 验证 workspace_root 未设置时，effective_base_dir 返回 None，
+    /// validate_path 对相对路径报错而非回退到 CWD。
+    #[test]
+    fn test_contract_missing_workspace_rejects_relative_path() {
+        use crate::context::JobContext;
+        use crate::tools::builtin::path_utils::{effective_base_dir, validate_path};
+
+        let ctx = JobContext::with_user("u", "chat", "test");
+        let base = effective_base_dir(None, &ctx);
+        assert!(base.is_none(), "No workspace means no base_dir");
+
+        let result = validate_path("src/main.rs", base.as_deref());
+        assert!(result.is_err(), "Relative path must fail without workspace");
+    }
+
+    /// 验证 chat_tool_execution_metadata 生成的 metadata 不覆盖已有的 workspace_root。
+    #[test]
+    fn test_contract_metadata_does_not_contain_workspace() {
+        let msg = IncomingMessage::new("tauri", "owner", "hello").with_thread("abc");
+        let meta = chat_tool_execution_metadata(&msg);
+        assert!(
+            meta.get("workspace_root").is_none(),
+            "chat_tool_execution_metadata should NOT set workspace_root (that's enrich_workspace_root's job)"
+        );
     }
 }
