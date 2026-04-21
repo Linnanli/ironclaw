@@ -12,6 +12,8 @@ mod anthropic_oauth;
 #[cfg(feature = "bedrock")]
 mod bedrock;
 pub mod circuit_breaker;
+#[cfg(feature = "claw-code-llm")]
+pub mod claw_code_provider;
 pub mod prompt;
 pub(crate) mod codex_auth;
 mod codex_chatgpt;
@@ -171,10 +173,32 @@ pub fn create_llm_provider_with_config(
 /// Dispatches on `RegistryProviderConfig::protocol` to build the appropriate
 /// rig-core client. This single function replaces what used to be 5 separate
 /// `create_*_provider` functions.
+///
+/// # Backend selection (Phase 2 migration)
+///
+/// When the `claw-code-llm` feature is built in **and** the environment
+/// variable `IRONCLAW_LLM_BACKEND=claw-code` is set, the function routes to
+/// [`claw_code_provider::ClawCodeLlmProvider`] instead of rig-core. Any other
+/// value (including unset) preserves the original rig-core path, so the
+/// default production behavior is byte-for-byte identical to pre-Phase-2.
+///
+/// See `docs/plans/architecture-refactor/04-phase2-claw-code-api.md` Step E.
 pub fn create_registry_provider(
     config: &RegistryProviderConfig,
     request_timeout_secs: u64,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
+    // Phase 2 Step E: opt-in claw-code-api path.
+    #[cfg(feature = "claw-code-llm")]
+    if should_use_claw_code_backend() {
+        tracing::info!(
+            provider = %config.provider_id,
+            model = %config.model,
+            "IRONCLAW_LLM_BACKEND=claw-code — routing to ClawCodeLlmProvider (Phase 2)"
+        );
+        return claw_code_provider::ClawCodeLlmProvider::from_registry_config(config)
+            .map(|p| Arc::new(p) as Arc<dyn LlmProvider>);
+    }
+
     // Codex ChatGPT mode: use the Responses API provider
     if config.is_codex_chatgpt {
         return create_codex_chatgpt_from_registry(config, request_timeout_secs);
@@ -196,6 +220,22 @@ pub fn create_registry_provider(
             Ok(Arc::new(provider))
         }
     }
+}
+
+/// Returns true when `IRONCLAW_LLM_BACKEND=claw-code` is set.
+///
+/// Accepts the canonical value `"claw-code"` plus two aliases used in docs:
+/// `"clawcode"`, `"claw_code"`. Comparison is case-insensitive.
+///
+/// Phase 2 Step E opt-in switch. Once Step I removes rig-core, this function
+/// and the env check disappear with it.
+#[cfg(feature = "claw-code-llm")]
+fn should_use_claw_code_backend() -> bool {
+    const ENV_KEY: &str = "IRONCLAW_LLM_BACKEND";
+    std::env::var(ENV_KEY)
+        .ok()
+        .map(|v| v.trim().to_ascii_lowercase())
+        .is_some_and(|v| matches!(v.as_str(), "claw-code" | "clawcode" | "claw_code"))
 }
 
 /// Create an OpenAI-compatible provider from raw parameters.
@@ -319,7 +359,10 @@ fn create_openai_compat_from_registry(
             "no-key".to_string()
         });
 
-    let mut builder = openai::Client::builder().api_key(&api_key);
+    type PatchClient = rig_adapter::ReasoningPatchClient;
+    let mut builder = openai::Client::<PatchClient>::builder()
+        .http_client(PatchClient::default())
+        .api_key(&api_key);
     if !config.base_url.is_empty() {
         builder = builder.base_url(&config.base_url);
     }
@@ -327,7 +370,7 @@ fn create_openai_compat_from_registry(
         builder = builder.http_headers(extra_headers);
     }
 
-    let client: openai::Client = builder.build().map_err(|e| LlmError::RequestFailed {
+    let client = builder.build().map_err(|e| LlmError::RequestFailed {
         provider: config.provider_id.clone(),
         reason: format!("Failed to create OpenAI-compatible client: {e}"),
     })?;
