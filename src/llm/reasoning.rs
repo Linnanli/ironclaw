@@ -1,4 +1,12 @@
 //! LLM reasoning capabilities for planning, tool selection, and evaluation.
+//!
+//! Phase 3 Step D-4: The data types that flow through the agentic loop
+//! (`ReasoningContext`, `TokenUsage`, `RespondOutput`, etc.) and the
+//! tool-intent detection helpers have moved to the
+//! [`x_claw_agent`](../../../../x_claw_agent/index.html) crate. This module
+//! re-exports them so existing `use crate::llm::reasoning::...` /
+//! `crate::llm::{...}` sites keep working unchanged. The `Reasoning` engine
+//! itself stays here because it depends on `LlmProvider` / `LlmError`.
 
 use std::sync::{Arc, LazyLock};
 
@@ -12,23 +20,20 @@ use crate::llm::{
     ToolCompletionRequest, ToolDefinition,
 };
 
+// Data types that flow through the agentic loop — re-exported from the
+// agent-runtime crate so downstream `use crate::llm::{ReasoningContext, ...}`
+// keeps resolving.
+pub use x_claw_agent::intent::{
+    TOOL_INTENT_NUDGE, TRUNCATED_TOOL_CALL_NOTICE, llm_signals_tool_intent,
+};
+pub use x_claw_agent::reasoning_ctx::ReasoningContext;
+pub use x_claw_agent::response_types::{
+    ResponseAnomaly, ResponseMetadata, RespondOutput, RespondResult, TokenUsage,
+};
+
 /// Token the agent returns when it has nothing to say (e.g. in group chats).
 /// The dispatcher should check for this and suppress the message.
 pub const SILENT_REPLY_TOKEN: &str = "NO_REPLY";
-
-/// Nudge message injected when the LLM expresses intent to use a tool but
-/// doesn't include any `tool_calls` in its response.
-pub const TOOL_INTENT_NUDGE: &str = "\
-You said you would perform an action, but you did not include any tool calls.\n\
-Do NOT describe what you intend to do — actually call the tool now.\n\
-Use the tool_calls mechanism to invoke the appropriate tool.";
-
-/// Notice injected when the LLM's response was truncated mid-tool-call,
-/// causing incomplete parameters. Tells the LLM to try a different approach.
-pub const TRUNCATED_TOOL_CALL_NOTICE: &str = "\
-Your previous response was truncated while generating tool call parameters. \
-The tool calls were discarded. Please try a different approach — \
-summarize or transform the data instead of echoing it verbatim in a tool call.";
 
 /// Seed value used as the second argument to `generate_tool_call_id` when
 /// recovering tool calls from malformed LLM text responses. Must differ from
@@ -36,122 +41,6 @@ summarize or transform the data instead of echoing it verbatim in a tool call.";
 /// ID collisions between provider-generated and text-recovered tool calls at
 /// the same positional index.
 const RECOVERED_TOOL_CALL_SEED: usize = 99;
-
-/// Detect when an LLM response expresses intent to call a tool without
-/// actually issuing tool calls. Returns `true` if the text contains phrases
-/// like "Let me search …" or "I'll fetch …" outside of fenced/indented code blocks.
-///
-/// Exclusion phrases (e.g. "let me explain") are checked first to avoid
-/// false positives on conversational language.
-pub fn llm_signals_tool_intent(response: &str) -> bool {
-    // Extract only non-code lines with quoted strings removed
-    let text = strip_code_blocks(response);
-    let lower = text.to_lowercase();
-
-    // Exclusion phrases — if any appear, bail out immediately
-    const EXCLUSIONS: &[&str] = &[
-        "let me explain",
-        "let me know",
-        "let me think",
-        "let me summarize",
-        "let me clarify",
-        "let me describe",
-        "let me help",
-        "let me understand",
-        "let me break",
-        "let me outline",
-        "let me walk you",
-        "let me provide",
-        "let me suggest",
-        "let me elaborate",
-        "let me start by",
-    ];
-    if EXCLUSIONS.iter().any(|e| lower.contains(e)) {
-        return false;
-    }
-
-    const PREFIXES: &[&str] = &["let me ", "i'll ", "i will ", "i'm going to "];
-    const ACTION_VERBS: &[&str] = &[
-        "search",
-        "look up",
-        "check",
-        "fetch",
-        "find",
-        "read the",
-        "write the",
-        "create",
-        "run the",
-        "execute",
-        "query",
-        "retrieve",
-        "add it",
-        "add the",
-        "add this",
-        "add that",
-        "update the",
-        "delete",
-        "remove the",
-        "look into",
-    ];
-
-    for prefix in PREFIXES {
-        for (i, _) in lower.match_indices(prefix) {
-            let after = &lower[i + prefix.len()..];
-            for verb in ACTION_VERBS {
-                if after.starts_with(verb) || after.contains(&format!(" {verb}")) {
-                    return true;
-                }
-            }
-        }
-    }
-
-    false
-}
-
-/// Strip fenced code blocks (``` ... ```), indented code lines (4+ spaces / tab),
-/// and double-quoted strings so that tool-intent detection only fires on prose.
-fn strip_code_blocks(text: &str) -> String {
-    let mut result = String::new();
-    let mut in_fence = false;
-
-    for line in text.lines() {
-        let trimmed = line.trim_start();
-        if trimmed.starts_with("```") {
-            in_fence = !in_fence;
-            continue;
-        }
-        if in_fence {
-            continue;
-        }
-        // Skip indented code lines (4+ spaces or tab)
-        if line.starts_with("    ") || line.starts_with('\t') {
-            continue;
-        }
-        // Strip double-quoted strings to avoid matching intent phrases inside quotes
-        let stripped = strip_quoted_strings(line);
-        result.push_str(&stripped);
-        result.push('\n');
-    }
-    result
-}
-
-/// Remove double-quoted string literals from a line.
-fn strip_quoted_strings(line: &str) -> String {
-    let mut result = String::with_capacity(line.len());
-    let mut in_quote = false;
-    let mut prev = '\0';
-    for ch in line.chars() {
-        if ch == '"' && prev != '\\' {
-            in_quote = !in_quote;
-            continue;
-        }
-        if !in_quote {
-            result.push(ch);
-        }
-        prev = ch;
-    }
-    result
-}
 
 /// Check if a response is a silent reply (the agent has nothing to say).
 ///
@@ -186,92 +75,6 @@ static FINAL_TAG_RE: LazyLock<Regex> =
 static PIPE_REASONING_TAG_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)<\|(/?)\s*(?:think(?:ing)?|thought|thoughts|antthinking|reasoning|reflection|scratchpad|inner_monologue)\|>").expect("PIPE_REASONING_TAG_RE") // safety: hardcoded literal
 });
-
-/// Context for reasoning operations.
-pub struct ReasoningContext {
-    /// Conversation history.
-    pub messages: Vec<ChatMessage>,
-    /// Available tools.
-    pub available_tools: Vec<ToolDefinition>,
-    /// Job description if working on a job.
-    pub job_description: Option<String>,
-    /// Current state description.
-    pub current_state: Option<String>,
-    /// Opaque metadata forwarded to the LLM provider (e.g. thread_id for chaining).
-    pub metadata: std::collections::HashMap<String, String>,
-    /// When true, force a text-only response (ignore available tools).
-    /// Used by the agentic loop to guarantee termination near the iteration limit.
-    /// Sticky: once set, never cleared within a loop invocation. Callers must
-    /// create a fresh `ReasoningContext` per `run_agentic_loop()` call.
-    pub force_text: bool,
-    /// Pre-built system prompt. When set, `respond_with_tools` uses this directly
-    /// instead of calling `build_system_prompt_with_tools`. Allows callers to build
-    /// the prompt once and reuse it across iterations.
-    pub system_prompt: Option<String>,
-    /// Per-user model override. When set, completion requests use this model
-    /// instead of the provider's default. Only effective with providers that
-    /// support per-request model overrides (e.g. NearAI).
-    pub model_override: Option<String>,
-}
-
-impl ReasoningContext {
-    /// Create a new reasoning context.
-    pub fn new() -> Self {
-        Self {
-            messages: Vec::new(),
-            available_tools: Vec::new(),
-            job_description: None,
-            current_state: None,
-            metadata: std::collections::HashMap::new(),
-            force_text: false,
-            system_prompt: None,
-            model_override: None,
-        }
-    }
-
-    /// Add a message to the context.
-    pub fn with_message(mut self, message: ChatMessage) -> Self {
-        self.messages.push(message);
-        self
-    }
-
-    /// Set messages directly (for session-based context).
-    pub fn with_messages(mut self, messages: Vec<ChatMessage>) -> Self {
-        self.messages = messages;
-        self
-    }
-
-    /// Set available tools.
-    pub fn with_tools(mut self, tools: Vec<ToolDefinition>) -> Self {
-        self.available_tools = tools;
-        self
-    }
-
-    /// Set a pre-built system prompt. When set, `respond_with_tools` uses this
-    /// directly instead of building one from `Reasoning` state.
-    pub fn with_system_prompt(mut self, prompt: String) -> Self {
-        self.system_prompt = Some(prompt);
-        self
-    }
-
-    /// Set job description.
-    pub fn with_job(mut self, description: impl Into<String>) -> Self {
-        self.job_description = Some(description.into());
-        self
-    }
-
-    /// Set metadata (forwarded to the LLM provider).
-    pub fn with_metadata(mut self, metadata: std::collections::HashMap<String, String>) -> Self {
-        self.metadata = metadata;
-        self
-    }
-}
-
-impl Default for ReasoningContext {
-    fn default() -> Self {
-        Self::new()
-    }
-}
 
 /// A planned action to take.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -318,65 +121,6 @@ pub struct ToolSelection {
     /// be echoed back in the corresponding tool result message. Without this,
     /// the provider cannot match results to their originating calls.
     pub tool_call_id: String,
-}
-
-/// Token usage from a single LLM call.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TokenUsage {
-    pub input_tokens: u32,
-    pub output_tokens: u32,
-    /// Tokens served from the provider's server-side prompt cache (Anthropic).
-    pub cache_read_input_tokens: u32,
-    /// Tokens written to the provider's prompt cache (Anthropic).
-    pub cache_creation_input_tokens: u32,
-}
-
-impl TokenUsage {
-    pub fn total(&self) -> u32 {
-        self.input_tokens + self.output_tokens
-    }
-}
-
-/// Structured anomaly classification for LLM responses.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ResponseAnomaly {
-    /// Tool mode was requested, but the provider returned no usable tool calls
-    /// and no recoverable text content.
-    EmptyToolCompletion,
-    /// Text mode returned no usable content after cleaning/truncation.
-    EmptyTextResponse,
-}
-
-/// Metadata attached to `RespondOutput` so callers can react to malformed
-/// provider behavior without inferring it from fallback strings.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct ResponseMetadata {
-    pub anomaly: Option<ResponseAnomaly>,
-}
-
-/// Result of a response with potential tool calls.
-///
-/// Used by the agent loop to handle tool execution before returning a final response.
-#[derive(Debug, Clone)]
-pub enum RespondResult {
-    /// A text response (no tools needed).
-    Text(String),
-    /// The model wants to call tools. Caller should execute them and call back.
-    /// Includes the optional content from the assistant message (some models
-    /// include explanatory text alongside tool calls).
-    ToolCalls {
-        tool_calls: Vec<ToolCall>,
-        content: Option<String>,
-    },
-}
-
-/// A `RespondResult` bundled with the token usage from the LLM call that produced it.
-#[derive(Debug, Clone)]
-pub struct RespondOutput {
-    pub result: RespondResult,
-    pub usage: TokenUsage,
-    pub finish_reason: FinishReason,
-    pub metadata: ResponseMetadata,
 }
 
 /// Reasoning engine for the agent.
