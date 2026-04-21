@@ -496,7 +496,7 @@ fn sanitize_tool_name(name: &str) -> String {
 /// Applies strict-mode schema normalization (same as OpenAI Chat Completions):
 /// `additionalProperties: false`, all properties required, optional fields nullable.
 fn convert_tool_definition(tool: &ToolDefinition) -> serde_json::Value {
-    use crate::llm::rig_adapter::normalize_schema_strict;
+    use crate::llm::schema_utils::normalize_schema_strict;
 
     serde_json::json!({
         "type": "function",

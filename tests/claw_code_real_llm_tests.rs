@@ -31,8 +31,6 @@
 //!
 //! 参考：`docs/plans/architecture-refactor/04-phase2-claw-code-api.md` Step G。
 
-#![cfg(feature = "claw-code-llm")]
-
 use ironclaw::llm::config::{CacheRetention, RegistryProviderConfig};
 use ironclaw::llm::{
     ChatMessage, CompletionRequest, LlmProvider, ToolCompletionRequest, ToolDefinition,
@@ -257,14 +255,8 @@ async fn test_qwen_via_create_registry_provider_with_env_switch() {
         return;
     };
 
-    // 开关打开，验证 `create_registry_provider` 入口也能导到 ClawCodeLlmProvider
-    // 并完成真实请求。注意：这个测试单独跑（不要和其他 env 测并发），因为改了
-    // 进程级 env。
-    // SAFETY: integration test main 本身单线程 `#[tokio::test]`，不会有其他
-    // 线程同时读 env；tokio 多任务里 env_var 读写在同一运行时内安全。
-    unsafe {
-        std::env::set_var("IRONCLAW_LLM_BACKEND", "claw-code");
-    }
+    // Step I 之后 `create_registry_provider` 默认路由到 ClawCodeLlmProvider，
+    // 不再需要 env 开关。这里保留测试是为了证明入口路径完整通过。
 
     let cfg = qwen_config(api_key);
     let provider = ironclaw::llm::create_registry_provider(&cfg, 60)
@@ -280,11 +272,6 @@ async fn test_qwen_via_create_registry_provider_with_env_switch() {
     let resp = provider.complete(req).await.expect("complete should succeed");
     eprintln!("→ content: {:?}", resp.content);
     assert!(!resp.content.is_empty());
-
-    // SAFETY: 同上；测试末尾清理。
-    unsafe {
-        std::env::remove_var("IRONCLAW_LLM_BACKEND");
-    }
 }
 
 // ============================================================================

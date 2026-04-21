@@ -31,8 +31,8 @@ The tool calls were discarded. Please try a different approach — \
 summarize or transform the data instead of echoing it verbatim in a tool call.";
 
 /// Seed value used as the second argument to `generate_tool_call_id` when
-/// recovering tool calls from malformed LLM text responses. This must differ
-/// from the `0` seed used in `rig_adapter::normalized_tool_call_id` to avoid
+/// recovering tool calls from malformed LLM text responses. Must differ from
+/// the `0` seed used by provider-level tool-call ID normalization to avoid
 /// ID collisions between provider-generated and text-recovered tool calls at
 /// the same positional index.
 const RECOVERED_TOOL_CALL_SEED: usize = 99;

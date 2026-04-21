@@ -8,11 +8,9 @@
 //! - **OpenAI-compatible**: Any endpoint that speaks the OpenAI API
 //! - **AWS Bedrock**: Native Converse API via aws-sdk-bedrockruntime
 
-mod anthropic_oauth;
 #[cfg(feature = "bedrock")]
 mod bedrock;
 pub mod circuit_breaker;
-#[cfg(feature = "claw-code-llm")]
 pub mod claw_code_provider;
 pub mod prompt;
 pub(crate) mod codex_auth;
@@ -34,8 +32,7 @@ pub mod recording;
 pub mod registry;
 pub mod response_cache;
 pub mod retry;
-mod openai_streaming;
-mod rig_adapter;
+pub(crate) mod schema_utils;
 pub mod session;
 pub mod smart_routing;
 mod token_refreshing;
@@ -74,14 +71,12 @@ pub use recording::RecordingLlm;
 pub use registry::{ProviderDefinition, ProviderProtocol, ProviderRegistry};
 pub use response_cache::{CachedProvider, ResponseCacheConfig};
 pub use retry::{RetryConfig, RetryProvider};
-pub use rig_adapter::RigAdapter;
 pub use session::{SessionConfig, SessionManager, create_session_manager};
 pub use smart_routing::{SmartRoutingConfig, SmartRoutingProvider, TaskComplexity};
 pub use token_refreshing::TokenRefreshingProvider;
 
 use std::sync::Arc;
 
-use rig::client::CompletionClient;
 use secrecy::ExposeSecret;
 
 // LlmConfig, NearAiConfig, RegistryProviderConfig, and LlmError are
@@ -179,64 +174,39 @@ pub fn create_llm_provider_with_config(
 ///
 /// When the `claw-code-llm` feature is built in **and** the environment
 /// variable `IRONCLAW_LLM_BACKEND=claw-code` is set, the function routes to
-/// [`claw_code_provider::ClawCodeLlmProvider`] instead of rig-core. Any other
-/// value (including unset) preserves the original rig-core path, so the
-/// default production behavior is byte-for-byte identical to pre-Phase-2.
-///
-/// See `docs/plans/architecture-refactor/04-phase2-claw-code-api.md` Step E.
+/// [`claw_code_provider::ClawCodeLlmProvider`] — Phase 2 Step I 之后 rig-core
+/// 已被彻底移除，claw-code-api 是唯一生产路径（`GithubCopilot` / `CodexChatGpt`
+/// 使用各自独立的 provider，不走 claw-code）。
 pub fn create_registry_provider(
     config: &RegistryProviderConfig,
     request_timeout_secs: u64,
 ) -> Result<Arc<dyn LlmProvider>, LlmError> {
-    // Phase 2 Step E: opt-in claw-code-api path.
-    #[cfg(feature = "claw-code-llm")]
-    if should_use_claw_code_backend() {
-        tracing::info!(
-            provider = %config.provider_id,
-            model = %config.model,
-            "IRONCLAW_LLM_BACKEND=claw-code — routing to ClawCodeLlmProvider (Phase 2)"
-        );
-        return claw_code_provider::ClawCodeLlmProvider::from_registry_config(config)
-            .map(|p| Arc::new(p) as Arc<dyn LlmProvider>);
-    }
-
     // Codex ChatGPT mode: use the Responses API provider
     if config.is_codex_chatgpt {
         return create_codex_chatgpt_from_registry(config, request_timeout_secs);
     }
 
-    match config.protocol {
-        ProviderProtocol::OpenAiCompletions => create_openai_compat_from_registry(config),
-        ProviderProtocol::Anthropic => create_anthropic_from_registry(config),
-        ProviderProtocol::Ollama => create_ollama_from_registry(config),
-        ProviderProtocol::GithubCopilot => {
-            let provider =
-                github_copilot::GithubCopilotProvider::new(config, request_timeout_secs)?;
-            tracing::debug!(
-                provider = %config.provider_id,
-                model = %config.model,
-                base_url = %config.base_url,
-                "Using GitHub Copilot provider (token exchange)"
-            );
-            Ok(Arc::new(provider))
-        }
+    // GitHub Copilot: 独立 provider（token exchange + 直连 HTTP）
+    if matches!(config.protocol, ProviderProtocol::GithubCopilot) {
+        let provider = github_copilot::GithubCopilotProvider::new(config, request_timeout_secs)?;
+        tracing::debug!(
+            provider = %config.provider_id,
+            model = %config.model,
+            base_url = %config.base_url,
+            "Using GitHub Copilot provider (token exchange)"
+        );
+        return Ok(Arc::new(provider));
     }
-}
 
-/// Returns true when `IRONCLAW_LLM_BACKEND=claw-code` is set.
-///
-/// Accepts the canonical value `"claw-code"` plus two aliases used in docs:
-/// `"clawcode"`, `"claw_code"`. Comparison is case-insensitive.
-///
-/// Phase 2 Step E opt-in switch. Once Step I removes rig-core, this function
-/// and the env check disappear with it.
-#[cfg(feature = "claw-code-llm")]
-fn should_use_claw_code_backend() -> bool {
-    const ENV_KEY: &str = "IRONCLAW_LLM_BACKEND";
-    std::env::var(ENV_KEY)
-        .ok()
-        .map(|v| v.trim().to_ascii_lowercase())
-        .is_some_and(|v| matches!(v.as_str(), "claw-code" | "clawcode" | "claw_code"))
+    // 其余 protocol（Anthropic / OpenAiCompletions / Ollama）走 claw-code-api。
+    tracing::debug!(
+        provider = %config.provider_id,
+        model = %config.model,
+        protocol = ?config.protocol,
+        "Routing provider through ClawCodeLlmProvider"
+    );
+    claw_code_provider::ClawCodeLlmProvider::from_registry_config(config)
+        .map(|p| Arc::new(p) as Arc<dyn LlmProvider>)
 }
 
 /// Create an OpenAI-compatible provider from raw parameters.
@@ -270,7 +240,8 @@ pub fn create_openai_provider(
         unsupported_params: Vec::new(),
         strict_tools_schema: true,
     };
-    create_openai_compat_from_registry(&config)
+    claw_code_provider::ClawCodeLlmProvider::from_registry_config(&config)
+        .map(|p| Arc::new(p) as Arc<dyn LlmProvider>)
 }
 
 fn create_codex_chatgpt_from_registry(
@@ -320,219 +291,6 @@ async fn create_bedrock_provider(config: &LlmConfig) -> Result<Arc<dyn LlmProvid
     );
 
     Ok(Arc::new(provider))
-}
-
-fn create_openai_compat_from_registry(
-    config: &RegistryProviderConfig,
-) -> Result<Arc<dyn LlmProvider>, LlmError> {
-    use rig::providers::openai;
-
-    let mut extra_headers = reqwest::header::HeaderMap::new();
-    for (key, value) in &config.extra_headers {
-        let name = match reqwest::header::HeaderName::from_bytes(key.as_bytes()) {
-            Ok(n) => n,
-            Err(e) => {
-                tracing::warn!(header = %key, error = %e, "Skipping extra header: invalid name");
-                continue;
-            }
-        };
-        let val = match reqwest::header::HeaderValue::from_str(value) {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::warn!(header = %key, error = %e, "Skipping extra header: invalid value");
-                continue;
-            }
-        };
-        extra_headers.insert(name, val);
-    }
-
-    let api_key = config
-        .api_key
-        .as_ref()
-        .map(|k| k.expose_secret().to_string())
-        .unwrap_or_else(|| {
-            tracing::warn!(
-                provider = %config.provider_id,
-                "No API key configured for {}. Requests will likely fail with 401. \
-                 Check your .env or secrets store.",
-                config.provider_id,
-            );
-            "no-key".to_string()
-        });
-
-    type PatchClient = rig_adapter::ReasoningPatchClient;
-    let mut builder = openai::Client::<PatchClient>::builder()
-        .http_client(PatchClient::default())
-        .api_key(&api_key);
-    if !config.base_url.is_empty() {
-        builder = builder.base_url(&config.base_url);
-    }
-    if !extra_headers.is_empty() {
-        builder = builder.http_headers(extra_headers);
-    }
-
-    let client = builder.build().map_err(|e| LlmError::RequestFailed {
-        provider: config.provider_id.clone(),
-        reason: format!("Failed to create OpenAI-compatible client: {e}"),
-    })?;
-
-    // Use CompletionsClient (Chat Completions API) instead of the default
-    // Client (Responses API). The Responses API path in rig-core handles
-    // tool results differently, which breaks IronClaw's tool call flow.
-    let client = client.completions_api();
-    let model = client.completion_model(&config.model);
-
-    // Create a model factory for runtime model switching.
-    // The factory captures the client and creates a new CompletionModel
-    // for the requested model name.
-    let client_for_factory = client.clone();
-    let model_factory = Arc::new(move |name: &str| {
-        client_for_factory.completion_model(name)
-    });
-
-    tracing::debug!(
-        provider = %config.provider_id,
-        model = %config.model,
-        base_url = %config.base_url,
-        "Using OpenAI-compatible provider"
-    );
-
-    // Build streaming config for direct HTTP SSE calls.
-    // This bypasses rig-core's non-streaming API for providers that
-    // support the OpenAI Chat Completions streaming protocol.
-    let streaming_config = {
-        let mut headers = reqwest::header::HeaderMap::new();
-        for (key, value) in &config.extra_headers {
-            if let (Ok(name), Ok(val)) = (
-                reqwest::header::HeaderName::from_bytes(key.as_bytes()),
-                reqwest::header::HeaderValue::from_str(value),
-            ) {
-                headers.insert(name, val);
-            }
-        }
-        let http_client = reqwest::Client::builder()
-            .default_headers(headers)
-            .build()
-            .map_err(|e| LlmError::RequestFailed {
-                provider: config.provider_id.clone(),
-                reason: format!("Failed to build streaming HTTP client: {e}"),
-            })?;
-        openai_streaming::StreamingConfig {
-            client: http_client,
-            base_url: config.base_url.clone(),
-            api_key: config
-                .api_key
-                .clone()
-                .unwrap_or_else(|| secrecy::SecretString::from("no-key".to_string())),
-        }
-    };
-
-    let adapter = RigAdapter::new(model, &config.model)
-        .with_unsupported_params(config.unsupported_params.clone())
-        .with_strict_tools_schema(config.strict_tools_schema)
-        .with_model_factory(model_factory)
-        .with_streaming_config(streaming_config);
-    Ok(Arc::new(adapter))
-}
-
-fn create_anthropic_from_registry(
-    config: &RegistryProviderConfig,
-) -> Result<Arc<dyn LlmProvider>, LlmError> {
-    // Route to OAuth provider when an OAuth token is present and no real API
-    // key was provided. When both are set, the API key takes priority (standard
-    // x-api-key auth via rig-core).
-    let api_key_is_placeholder = config
-        .api_key
-        .as_ref()
-        .is_some_and(|k| k.expose_secret() == crate::llm::config::OAUTH_PLACEHOLDER);
-    if config.oauth_token.is_some() && (config.api_key.is_none() || api_key_is_placeholder) {
-        tracing::debug!(
-            provider = %config.provider_id,
-            model = %config.model,
-            base_url = if config.base_url.is_empty() { "default" } else { &config.base_url },
-            "Using Anthropic OAuth API"
-        );
-        let provider = anthropic_oauth::AnthropicOAuthProvider::new(config)?;
-        return Ok(Arc::new(provider));
-    }
-
-    use crate::llm::config::CacheRetention;
-    use rig::providers::anthropic;
-
-    let api_key = config
-        .api_key
-        .as_ref()
-        .map(|k| k.expose_secret().to_string())
-        .ok_or_else(|| LlmError::AuthFailed {
-            provider: config.provider_id.clone(),
-        })?;
-
-    let client: anthropic::Client = if config.base_url.is_empty() {
-        anthropic::Client::new(&api_key)
-    } else {
-        anthropic::Client::builder()
-            .api_key(&api_key)
-            .base_url(&config.base_url)
-            .build()
-    }
-    .map_err(|e| LlmError::RequestFailed {
-        provider: config.provider_id.clone(),
-        reason: format!("Failed to create Anthropic client: {e}"),
-    })?;
-
-    let cache_retention = config.cache_retention;
-
-    let model = client.completion_model(&config.model);
-
-    if cache_retention != CacheRetention::None {
-        tracing::debug!(
-            model = %config.model,
-            retention = %cache_retention,
-            "Anthropic automatic prompt caching enabled"
-        );
-    }
-
-    tracing::debug!(
-        provider = %config.provider_id,
-        model = %config.model,
-        base_url = if config.base_url.is_empty() { "default" } else { &config.base_url },
-        "Using Anthropic provider"
-    );
-
-    Ok(Arc::new(
-        RigAdapter::new(model, &config.model)
-            .with_cache_retention(cache_retention)
-            .with_unsupported_params(config.unsupported_params.clone()),
-    ))
-}
-
-fn create_ollama_from_registry(
-    config: &RegistryProviderConfig,
-) -> Result<Arc<dyn LlmProvider>, LlmError> {
-    use rig::client::Nothing;
-    use rig::providers::ollama;
-
-    let client: ollama::Client = ollama::Client::builder()
-        .base_url(&config.base_url)
-        .api_key(Nothing)
-        .build()
-        .map_err(|e| LlmError::RequestFailed {
-            provider: config.provider_id.clone(),
-            reason: format!("Failed to create Ollama client: {e}"),
-        })?;
-
-    let model = client.completion_model(&config.model);
-
-    tracing::debug!(
-        provider = %config.provider_id,
-        model = %config.model,
-        base_url = %config.base_url,
-        "Using Ollama provider"
-    );
-
-    let adapter = RigAdapter::new(model, &config.model)
-        .with_unsupported_params(config.unsupported_params.clone());
-    Ok(Arc::new(adapter))
 }
 
 /// Create an OpenAI Codex provider with OAuth authentication.

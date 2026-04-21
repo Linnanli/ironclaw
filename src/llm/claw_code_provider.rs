@@ -1,22 +1,13 @@
 //! `ClawCodeLlmProvider` — LLM Provider 基于 `claw-code-api` 的原生客户端。
 //!
-//! Phase 2 架构重构的核心实现：替换 `rig_adapter.rs`（2026 行）为对
-//! [`claw-code-api`](../../../../claw-code/rust/crates/api) 的薄封装。
+//! Phase 2 Step I 完成后，本模块是生产唯一 LLM 路径
+//! （`GithubCopilot` / `CodexChatGpt` 由各自独立 provider 处理）。
 //!
 //! 关键收益：
 //! - `OpenAiCompatClient` 已为各 OpenAI-compat 厂商（DashScope/Kimi/xAI/Ollama）
-//!   提供 per-provider hook，从根本上消除"打 JSON 补丁"的需要（参见
+//!   提供 per-provider hook，消除"打 JSON 补丁"需要（参见
 //!   [`docs/plans/architecture-refactor/04-phase2-claw-code-api.md`]）。
-//! - 编译期裁掉大量 `rig_adapter.rs` 的异构类型体操。
-//!
-//! 当前 Step C 范围：
-//! - ✅ 消息/工具映射：`ChatMessage` ↔ `claw_code_api::InputMessage`
-//! - ✅ 完成响应映射：`MessageResponse` → `CompletionResponse`/`ToolCompletionResponse`
-//! - ⬜ 流式实现（留给 Step G 真实模型测试后再补）
-//!
-//! 所有 public 接口都 feature-gated 在 `claw-code-llm` 下，默认特性不受影响。
-
-#![cfg(feature = "claw-code-llm")]
+//! - 编译期裁掉大量历史 rig 适配层的异构类型体操。
 
 use async_trait::async_trait;
 use claw_code_api::{
@@ -78,7 +69,7 @@ impl ClawCodeLlmProvider {
     /// | `Anthropic`         | `AnthropicClient::new(api_key)` 或 OAuth `AuthSource::BearerToken` |
     /// | `OpenAiCompletions` | `OpenAiCompatClient::new(api_key, cfg).with_base_url(...)`  |
     /// | `Ollama`            | 同上，空 api_key                                             |
-    /// | `GithubCopilot`     | 暂不支持 — claw-code-api 尚无对应 provider，回退 `rig-llm`   |
+    /// | `GithubCopilot`     | 不在本模块范围，由 `github_copilot::GithubCopilotProvider` 处理 |
     ///
     /// 不读取任何环境变量：凭据/URL 都来自显式配置，符合 x-claw 的 keychain 模型。
     pub fn from_registry_config(config: &RegistryProviderConfig) -> Result<Self, LlmError> {
@@ -92,8 +83,8 @@ impl ClawCodeLlmProvider {
             ProviderProtocol::GithubCopilot => {
                 return Err(LlmError::RequestFailed {
                     provider: config.provider_id.clone(),
-                    reason: "github_copilot is not supported by claw-code-api yet; \
-                             build with --features rig-llm to use this provider"
+                    reason: "github_copilot 不应由 ClawCodeLlmProvider 处理；请确认调用方先走 \
+                             GithubCopilotProvider （见 mod.rs create_registry_provider）"
                         .to_string(),
                 });
             }
@@ -1187,8 +1178,8 @@ mod tests {
             LlmError::RequestFailed { provider, reason } => {
                 assert_eq!(provider, "github");
                 assert!(
-                    reason.contains("rig-llm"),
-                    "error should tell user to fall back to rig-llm: {reason}"
+                    reason.contains("GithubCopilotProvider"),
+                    "error should redirect caller to GithubCopilotProvider: {reason}"
                 );
             }
             other => panic!("unexpected err: {other:?}"),
@@ -1214,146 +1205,11 @@ mod tests {
     }
 
     // ========================================================================
-    // Step E — 调用点切换：`create_registry_provider` 路由到 ClawCode
-    //
-    // 这些测试通过 `env::set_var` 临时切换后端，再用现有的
-    // `create_registry_provider()` 入口验证路由逻辑。
-    //
-    // 注意：Rust 单元测试默认多线程，而 `set_var` 是进程全局。用互斥锁串行化，
-    // 并通过 guard 在 drop 时还原原值，避免跨测试污染（模式与
-    // `claw-code-api` 自身测试一致）。
-    // ========================================================================
-
-    use std::sync::{Mutex, OnceLock};
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    struct EnvGuard {
-        key: &'static str,
-        original: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set(key: &'static str, value: Option<&str>) -> Self {
-            let original = std::env::var_os(key);
-            // SAFETY: tests that touch env vars are serialized through `env_lock()`,
-            // so no other thread observes partial state. Each guard restores the
-            // original on drop, so the process env is clean after tests finish.
-            unsafe {
-                match value {
-                    Some(v) => std::env::set_var(key, v),
-                    None => std::env::remove_var(key),
-                }
-            }
-            Self { key, original }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            // SAFETY: same as `EnvGuard::set` — serialized by env_lock().
-            unsafe {
-                match self.original.take() {
-                    Some(v) => std::env::set_var(self.key, v),
-                    None => std::env::remove_var(self.key),
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_env_switch_recognizes_canonical_value() {
-        let _g = env_lock();
-        let _env = EnvGuard::set("IRONCLAW_LLM_BACKEND", Some("claw-code"));
-        assert!(super::super::should_use_claw_code_backend());
-    }
-
-    #[test]
-    fn test_env_switch_recognizes_aliases() {
-        let _g = env_lock();
-        for alias in ["clawcode", "claw_code", "CLAW-CODE", "Claw-Code"] {
-            let _env = EnvGuard::set("IRONCLAW_LLM_BACKEND", Some(alias));
-            assert!(
-                super::super::should_use_claw_code_backend(),
-                "alias '{alias}' should be recognized",
-            );
-        }
-    }
-
-    #[test]
-    fn test_env_switch_default_is_rig() {
-        let _g = env_lock();
-        let _env = EnvGuard::set("IRONCLAW_LLM_BACKEND", None);
-        assert!(!super::super::should_use_claw_code_backend());
-    }
-
-    #[test]
-    fn test_env_switch_rejects_other_values() {
-        let _g = env_lock();
-        for value in ["rig", "rig-core", "", "foo", "0"] {
-            let _env = EnvGuard::set("IRONCLAW_LLM_BACKEND", Some(value));
-            assert!(
-                !super::super::should_use_claw_code_backend(),
-                "value '{value}' must not enable claw-code backend",
-            );
-        }
-    }
-
-    #[test]
-    fn test_create_registry_provider_routes_to_claw_code_when_enabled() {
-        let _g = env_lock();
-        let _env = EnvGuard::set("IRONCLAW_LLM_BACKEND", Some("claw-code"));
-        let cfg = mk_config(
-            ProviderProtocol::OpenAiCompletions,
-            "openai",
-            "gpt-4o",
-            "https://api.openai.com/v1",
-            Some("sk-openai-e2e"),
-            None,
-        );
-        // 直接调 public 入口，验证路由分支命中且构造成功。
-        let p = crate::llm::create_registry_provider(&cfg, 60).expect("should build");
-        assert_eq!(p.model_name(), "gpt-4o");
-    }
-
-    #[test]
-    fn test_create_registry_provider_rejects_github_copilot_under_claw_code_backend() {
-        // Step D 把 GithubCopilot 列为 claw-code-api 暂不支持；Step E 切换
-        // 后整个路径也应当如实回传错误，不应当悄悄 fall through 到 rig 路径。
-        let _g = env_lock();
-        let _env = EnvGuard::set("IRONCLAW_LLM_BACKEND", Some("claw-code"));
-        let cfg = mk_config(
-            ProviderProtocol::GithubCopilot,
-            "github",
-            "gpt-4o",
-            "https://api.githubcopilot.com",
-            Some("ghp-test"),
-            None,
-        );
-        let err = match crate::llm::create_registry_provider(&cfg, 60) {
-            Ok(_) => panic!("should have rejected github_copilot under claw-code backend"),
-            Err(e) => e,
-        };
-        match err {
-            LlmError::RequestFailed { provider, reason } => {
-                assert_eq!(provider, "github");
-                assert!(reason.contains("rig-llm"));
-            }
-            other => panic!("expected RequestFailed with rig-llm hint, got {other:?}"),
-        }
-    }
-
-    // ========================================================================
     // Step H — DLP/安全回归
     //
     // ClawCodeLlmProvider 是 LLM 传输层，SafetyLayer/Sanitizer/LeakDetector 挂
-    // 在它上游（dispatcher/agent_loop/routine_engine）。Phase 2 替换 rig_adapter
-    // 后，本模块只要保证"已 sanitize 的 bytes 到 claw-code-api 请求体仍是同一
+    // 在它上游（dispatcher/agent_loop/routine_engine）。Phase 2 Step I 完成后，
+    // 本模块只要保证"已 sanitize 的 bytes 到 claw-code-api 请求体仍是同一
     // 份 bytes"即可；任何引入伪造前缀/改写内容的 bug 都会被这里的测试捕获。
     //
     // 原则（AGENTS.md 历史教训）：

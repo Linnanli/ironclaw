@@ -130,11 +130,9 @@ blake3 = "1"
 rand = "0.8"
 subtle = "2"  # Constant-time comparisons for token validation
 
-# Multi-provider LLM support
-rig-core = { version = "0.30", default-features = false, features = ["reqwest-rustls"], optional = true }
-# Phase 2 (architecture-refactor): claw-code 原生 LLM 客户端
+# Multi-provider LLM support (claw-code-api native client)
 # crate 真实 package 名为 `api`，这里重命名为 claw-code-api 避免泛名冲突。
-claw-code-api = { path = "../../claw-code/rust/crates/api", package = "api", optional = true }
+claw-code-api = { path = "../../claw-code/rust/crates/api", package = "api" }
 
 # AWS Bedrock (native Converse API, opt-in via --features bedrock)
 aws-config = { version = "1", features = ["behavior-version-latest"], optional = true }
@@ -207,14 +205,12 @@ name = "safety_pipeline"
 harness = false
 
 [features]
-default = ["postgres", "libsql", "html-to-markdown", "rig-llm"]
+default = ["postgres", "libsql", "html-to-markdown"]
 test-support = ["dep:tempfile"]
-# Phase 2 架构重构：LLM Provider 层迁移
-#   rig-llm  — 历史路径，通过 rig-core 接入多模型（默认开）
-#   claw-code-llm — 新路径，直接用 claw-code/rust/crates/api
-# 两者可共存（过渡期）；Phase 2 Step I 之后删除 rig-llm
-rig-llm = ["dep:rig-core"]
-claw-code-llm = ["dep:claw-code-api"]
+# 历史遗留：Phase 2 Step I 之前用来切换 rig-core / claw-code-api 两套 LLM
+# 后端，现在 claw-code-api 是唯一路径，feature 名保留为空 no-op，避免下游
+# （如 desktop-client）触发构建失败。下一次整理时可直接删除。
+claw-code-llm = []
 postgres = [
     "dep:deadpool-postgres",
     "dep:tokio-postgres",
