@@ -22,6 +22,7 @@ use crate::config::SafetyConfig;
 use crate::context::JobContext;
 use crate::error::WorkerError;
 use crate::llm::{ChatMessage, LlmProvider, Reasoning, ReasoningContext, ResponseMetadata};
+use x_claw_agent::traits::HostError;
 use crate::safety::SafetyLayer;
 use crate::tools::ToolRegistry;
 use crate::tools::execute::{execute_tool_simple, process_tool_result};
@@ -142,7 +143,8 @@ impl WorkerRuntime {
             })
             .await?;
 
-        // Create reasoning engine
+        // Reasoning engine is built and moved into the delegate below; the
+        // agentic loop engine itself is LLM-type-agnostic (Route B, D-4.5).
         let reasoning = Reasoning::new(self.llm.clone());
 
         // Build initial context
@@ -175,6 +177,7 @@ Work independently to complete this job. When finished, your final message MUST 
                 last_output: Mutex::new(String::new()),
                 iteration_tracker: iteration_tracker.clone(),
                 recovery_state: Mutex::new(AutonomousRecoveryState::default()),
+                reasoning,
             };
 
             let config = AgenticLoopConfig {
@@ -183,13 +186,7 @@ Work independently to complete this job. When finished, your final message MUST 
                 max_tool_intent_nudges: 2,
             };
 
-            crate::agent::agentic_loop::run_agentic_loop(
-                &delegate,
-                &reasoning,
-                &mut reason_ctx,
-                &config,
-            )
-            .await
+            crate::agent::agentic_loop::run_agentic_loop(&delegate, &mut reason_ctx, &config).await
         })
         .await;
 
@@ -328,6 +325,9 @@ struct ContainerDelegate {
     /// `CompletionReport` can include accurate iteration counts.
     iteration_tracker: Arc<Mutex<u32>>,
     recovery_state: Mutex<AutonomousRecoveryState>,
+    /// Route-B (D-4.5): the delegate owns the LLM reasoning engine instead
+    /// of receiving it as a loop parameter.
+    reasoning: Reasoning,
 }
 
 impl ContainerDelegate {
@@ -418,12 +418,11 @@ impl LoopDelegate for ContainerDelegate {
 
     async fn call_llm(
         &self,
-        reasoning: &Reasoning,
         reason_ctx: &mut ReasoningContext,
         _iteration: usize,
-    ) -> Result<crate::llm::RespondOutput, crate::error::Error> {
+    ) -> Result<crate::llm::RespondOutput, HostError> {
         // Container uses respond_with_tools (which may return either text or tool calls)
-        reasoning
+        self.reasoning
             .respond_with_tools(reason_ctx)
             .await
             .map_err(Into::into)
@@ -508,7 +507,7 @@ impl LoopDelegate for ContainerDelegate {
         tool_calls: Vec<crate::llm::ToolCall>,
         content: Option<String>,
         reason_ctx: &mut ReasoningContext,
-    ) -> Result<Option<LoopOutcome>, crate::error::Error> {
+    ) -> Result<Option<LoopOutcome>, HostError> {
         {
             let mut recovery = self.recovery_state.lock().await;
             recovery.on_valid_tool_call();

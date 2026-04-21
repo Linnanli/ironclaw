@@ -25,6 +25,7 @@ use crate::llm::{
     ActionPlan, ChatMessage, LlmProvider, Reasoning, ReasoningContext, RespondResult,
     ResponseMetadata, ToolCall, ToolSelection,
 };
+use x_claw_agent::traits::HostError;
 use crate::safety::SafetyLayer;
 use crate::tenant::AdminScope;
 use crate::tools::execute::process_tool_result;
@@ -419,6 +420,7 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
             consecutive_rate_limits: std::sync::atomic::AtomicUsize::new(0),
             recovery_state: tokio::sync::Mutex::new(AutonomousRecoveryState::default()),
             has_text_response: std::sync::atomic::AtomicBool::new(false),
+            reasoning,
         };
 
         let config = AgenticLoopConfig {
@@ -427,7 +429,9 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
             max_tool_intent_nudges: 2,
         };
 
-        let outcome = run_agentic_loop(&delegate, reasoning, reason_ctx, &config).await?;
+        let outcome = run_agentic_loop(&delegate, reason_ctx, &config)
+            .await
+            .map_err(crate::agent::agentic_loop::host_err_to_error)?;
 
         match outcome {
             LoopOutcome::Response(_) => {
@@ -1227,6 +1231,10 @@ struct JobDelegate<'a> {
     /// When true, an empty follow-up response is treated as job completion
     /// rather than a retry signal (prevents spurious failures in routines).
     has_text_response: std::sync::atomic::AtomicBool,
+    /// Route-B (D-4.5): the delegate borrows the LLM reasoning engine
+    /// instead of receiving it as a loop parameter. Borrowed because
+    /// `execution_loop` needs `&reasoning` both before and during the loop.
+    reasoning: &'a Reasoning,
 }
 
 impl<'a> JobDelegate<'a> {
@@ -1442,10 +1450,10 @@ impl<'a> LoopDelegate for JobDelegate<'a> {
 
     async fn call_llm(
         &self,
-        reasoning: &Reasoning,
         reason_ctx: &mut ReasoningContext,
         _iteration: usize,
-    ) -> Result<crate::llm::RespondOutput, crate::error::Error> {
+    ) -> Result<crate::llm::RespondOutput, HostError> {
+        let reasoning = self.reasoning;
         // Try select_tools first, fall back to respond_with_tools
         match reasoning.select_tools(reason_ctx).await {
             Ok(s) if !s.is_empty() => {
@@ -1470,7 +1478,10 @@ impl<'a> LoopDelegate for JobDelegate<'a> {
             }
             Ok(_) => {} // empty selections, fall through
             Err(crate::error::LlmError::RateLimited { retry_after, .. }) => {
-                return self.handle_rate_limit(retry_after, "tool selection").await;
+                return self
+                    .handle_rate_limit(retry_after, "tool selection")
+                    .await
+                    .map_err(Into::into);
             }
             Err(e) => {
                 if let Some(output) = self.try_complete_on_error("select_tools", &e).await {
@@ -1503,10 +1514,10 @@ impl<'a> LoopDelegate for JobDelegate<'a> {
 
                 Ok(output)
             }
-            Err(crate::error::LlmError::RateLimited { retry_after, .. }) => {
-                self.handle_rate_limit(retry_after, "respond_with_tools")
-                    .await
-            }
+            Err(crate::error::LlmError::RateLimited { retry_after, .. }) => self
+                .handle_rate_limit(retry_after, "respond_with_tools")
+                .await
+                .map_err(Into::into),
             Err(e) => {
                 if let Some(output) = self.try_complete_on_error("respond_with_tools", &e).await {
                     return Ok(output);
@@ -1633,7 +1644,7 @@ impl<'a> LoopDelegate for JobDelegate<'a> {
         tool_calls: Vec<crate::llm::ToolCall>,
         content: Option<String>,
         reason_ctx: &mut ReasoningContext,
-    ) -> Result<Option<LoopOutcome>, crate::error::Error> {
+    ) -> Result<Option<LoopOutcome>, HostError> {
         {
             let mut recovery = self.recovery_state.lock().await;
             recovery.on_valid_tool_call();
@@ -2356,12 +2367,14 @@ mod tests {
             .unwrap(); // safety: test
 
         let (_, mut rx) = tokio::sync::mpsc::channel(1);
+        let reasoning = Reasoning::new(worker.llm().clone());
         let delegate = JobDelegate {
             worker: &worker,
             rx: tokio::sync::Mutex::new(&mut rx),
             consecutive_rate_limits: std::sync::atomic::AtomicUsize::new(0),
             recovery_state: tokio::sync::Mutex::new(AutonomousRecoveryState::default()),
             has_text_response: std::sync::atomic::AtomicBool::new(false),
+            reasoning: &reasoning,
         };
 
         let mut reason_ctx = ReasoningContext::new();

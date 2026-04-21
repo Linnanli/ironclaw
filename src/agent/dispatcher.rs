@@ -22,6 +22,7 @@ use crate::agent::agentic_loop::{
 };
 use crate::llm::{ChatMessage, Reasoning, ReasoningContext};
 use crate::tools::redact_params;
+use x_claw_agent::traits::HostError;
 
 fn disabled_names_from_metadata(
     message: &IncomingMessage,
@@ -256,6 +257,7 @@ impl Agent {
             nudge_at,
             force_text_at,
             user_tz,
+            reasoning,
         };
 
         let mut reason_ctx = ReasoningContext::new()
@@ -277,11 +279,11 @@ impl Agent {
 
         let outcome = crate::agent::agentic_loop::run_agentic_loop(
             &delegate,
-            &reasoning,
             &mut reason_ctx,
             &loop_config,
         )
-        .await?;
+        .await
+        .map_err(crate::agent::agentic_loop::host_err_to_error)?;
 
         match outcome {
             LoopOutcome::Response(text) => Ok(AgenticLoopResult::Response(text)),
@@ -335,6 +337,11 @@ struct ChatDelegate<'a> {
     nudge_at: usize,
     force_text_at: usize,
     user_tz: chrono_tz::Tz,
+    /// Route-B (D-4.5): the delegate owns the LLM reasoning engine instead
+    /// of receiving it as a loop parameter. Inherent helpers
+    /// (`call_llm_non_streaming` / `call_llm_streaming`) still take
+    /// `reasoning: &Reasoning` and are invoked with `&self.reasoning`.
+    reasoning: Reasoning,
 }
 
 #[async_trait]
@@ -421,10 +428,10 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
 
     async fn call_llm(
         &self,
-        reasoning: &Reasoning,
         reason_ctx: &mut ReasoningContext,
         iteration: usize,
-    ) -> Result<crate::llm::RespondOutput, Error> {
+    ) -> Result<crate::llm::RespondOutput, HostError> {
+        let reasoning = &self.reasoning;
         // Enforce cost guardrails before the LLM call (global + per-user)
         if let Err(limit) = self.tenant.check_cost_allowed().await {
             return Err(crate::error::LlmError::InvalidResponse {
@@ -546,7 +553,7 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
         tool_calls: Vec<crate::llm::ToolCall>,
         content: Option<String>,
         reason_ctx: &mut ReasoningContext,
-    ) -> Result<Option<LoopOutcome>, Error> {
+    ) -> Result<Option<LoopOutcome>, HostError> {
         // Extract and sanitize the narrative before consuming `content`.
         let narrative = content
             .as_deref()
