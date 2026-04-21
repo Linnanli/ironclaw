@@ -5,6 +5,7 @@
 
 use crate::llm::config::CacheRetention;
 use async_trait::async_trait;
+use bytes::Bytes;
 use rig::OneOrMany;
 use std::sync::Arc;
 use rig::completion::{
@@ -971,6 +972,293 @@ fn normalize_tool_name(name: &str, known_tools: &HashSet<String>) -> String {
     }
 
     name.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// ReasoningPatchClient — HTTP client wrapper that patches `reasoning_content`
+// ---------------------------------------------------------------------------
+
+use std::future::Future;
+use std::pin::Pin;
+
+/// A [`reqwest::Client`] wrapper that transparently patches OpenAI-compatible
+/// JSON responses before rig-core deserializes them.
+///
+/// Some providers (DashScope/Qwen, GLM, DeepSeek) return the answer in
+/// `reasoning_content` while leaving `content` null. Rig-core only looks at
+/// `content` and `tool_calls`, so it sees an empty response and errors out.
+///
+/// This wrapper intercepts the raw response bytes, detects the pattern, and
+/// copies `reasoning_content` → `content` so rig-core can parse it normally.
+#[derive(Clone, Debug)]
+pub(crate) struct ReasoningPatchClient {
+    inner: reqwest::Client,
+}
+
+impl Default for ReasoningPatchClient {
+    fn default() -> Self {
+        Self {
+            inner: reqwest::Client::default(),
+        }
+    }
+}
+
+/// Patch a chat-completions JSON response so it conforms to rig-core's
+/// `CompletionResponse` expectations.
+///
+/// Fixes applied:
+/// 1. `reasoning_content` → `content` when content is null/empty.
+/// 2. `finish_reason: null` → `"stop"` (rig-core expects `String`, not `Option`).
+/// 3. Missing `object` field → inject `"chat.completion"`.
+fn patch_reasoning_content(raw: Bytes) -> Bytes {
+    // Always log the raw body at DEBUG level for diagnostics
+    let raw_str = String::from_utf8_lossy(&raw);
+    let truncated: &str = if raw_str.len() > 3000 {
+        &raw_str[..3000]
+    } else {
+        &raw_str
+    };
+    tracing::debug!(
+        raw_response = %truncated,
+        "ReasoningPatchClient: raw response from provider"
+    );
+
+    let Ok(mut json) = serde_json::from_slice::<serde_json::Value>(&raw) else {
+        tracing::warn!("ReasoningPatchClient: response is not valid JSON, passing through");
+        return raw;
+    };
+
+    let mut changed = false;
+
+    // Fix missing `object` field — rig-core CompletionResponse requires it
+    if json.get("object").map_or(true, |v| v.is_null()) {
+        if let Some(obj) = json.as_object_mut() {
+            obj.insert(
+                "object".to_string(),
+                serde_json::Value::String("chat.completion".to_string()),
+            );
+            tracing::debug!("ReasoningPatchClient: injected missing 'object' field");
+            changed = true;
+        }
+    }
+
+    let Some(choices) = json.get_mut("choices").and_then(|c| c.as_array_mut()) else {
+        tracing::debug!("ReasoningPatchClient: no 'choices' array, passing through");
+        return raw;
+    };
+
+    for (i, choice) in choices.iter_mut().enumerate() {
+        // Fix `finish_reason: null` → "stop"
+        if choice
+            .get("finish_reason")
+            .map_or(true, |v| v.is_null())
+        {
+            if let Some(obj) = choice.as_object_mut() {
+                obj.insert(
+                    "finish_reason".to_string(),
+                    serde_json::Value::String("stop".to_string()),
+                );
+                tracing::debug!(choice_index = i, "ReasoningPatchClient: set null finish_reason → \"stop\"");
+                changed = true;
+            }
+        }
+
+        let Some(message) = choice.get_mut("message") else {
+            continue;
+        };
+
+        let content_is_empty = message
+            .get("content")
+            .map_or(true, |c| c.is_null() || c.as_str().map_or(false, str::is_empty));
+
+        if !content_is_empty {
+            continue;
+        }
+
+        // Copy reasoning_content → content (DashScope/Qwen, GLM, DeepSeek)
+        if let Some(reasoning) = message.get("reasoning_content").cloned() {
+            if !reasoning.is_null() && reasoning.as_str().map_or(true, |s| !s.is_empty()) {
+                tracing::warn!(
+                    choice_index = i,
+                    "ReasoningPatchClient: content is null but reasoning_content present — \
+                     copying reasoning_content → content"
+                );
+                if let Some(obj) = message.as_object_mut() {
+                    obj.insert("content".to_string(), reasoning);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    if changed {
+        let patched_bytes = serde_json::to_vec(&json)
+            .map(Bytes::from)
+            .unwrap_or(raw);
+
+        let patched_str = String::from_utf8_lossy(&patched_bytes);
+        let patched_truncated: &str = if patched_str.len() > 3000 {
+            &patched_str[..3000]
+        } else {
+            &patched_str
+        };
+        tracing::debug!(
+            patched_response = %patched_truncated,
+            "ReasoningPatchClient: response after patching"
+        );
+        patched_bytes
+    } else {
+        raw
+    }
+}
+
+/// Helper: convert reqwest error to rig http_client Error.
+fn rig_instance_error<E: std::error::Error + Send + Sync + 'static>(
+    error: E,
+) -> rig::http_client::Error {
+    rig::http_client::Error::Instance(Box::new(error))
+}
+
+impl rig::http_client::HttpClientExt for ReasoningPatchClient {
+    fn send<T, U>(
+        &self,
+        req: rig::http_client::Request<T>,
+    ) -> impl Future<Output = rig::http_client::Result<rig::http_client::Response<rig::http_client::LazyBody<U>>>>
+           + Send
+           + 'static
+    where
+        T: Into<Bytes> + Send,
+        U: From<Bytes> + Send + 'static,
+    {
+        let (parts, body) = req.into_parts();
+        let req = self
+            .inner
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
+            .body(body.into());
+
+        async move {
+            let response = req.send().await.map_err(rig_instance_error)?;
+            if !response.status().is_success() {
+                return Err(rig::http_client::Error::InvalidStatusCodeWithMessage(
+                    response.status(),
+                    response.text().await.unwrap_or_default(),
+                ));
+            }
+
+            let status = response.status();
+            let headers = response.headers().clone();
+
+            let mut res = rig::http_client::Response::builder().status(status);
+            if let Some(hs) = res.headers_mut() {
+                *hs = headers;
+            }
+
+            let body: rig::http_client::LazyBody<U> = Box::pin(async {
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(rig_instance_error)?;
+
+                let patched = patch_reasoning_content(bytes);
+                Ok(U::from(patched))
+            });
+
+            res.body(body).map_err(rig::http_client::Error::Protocol)
+        }
+    }
+
+    fn send_multipart<U>(
+        &self,
+        req: rig::http_client::Request<rig::http_client::MultipartForm>,
+    ) -> impl Future<
+        Output = rig::http_client::Result<rig::http_client::Response<rig::http_client::LazyBody<U>>>,
+    > + Send
+           + 'static
+    where
+        U: From<Bytes> + Send + 'static,
+    {
+        let (parts, body) = req.into_parts();
+        let body = reqwest::multipart::Form::from(body);
+
+        let req = self
+            .inner
+            .request(parts.method, parts.uri.to_string())
+            .headers(parts.headers)
+            .multipart(body);
+
+        async move {
+            let response = req.send().await.map_err(rig_instance_error)?;
+            if !response.status().is_success() {
+                return Err(rig::http_client::Error::InvalidStatusCodeWithMessage(
+                    response.status(),
+                    response.text().await.unwrap_or_default(),
+                ));
+            }
+
+            let mut res = rig::http_client::Response::builder().status(response.status());
+            if let Some(hs) = res.headers_mut() {
+                *hs = response.headers().clone();
+            }
+
+            let body: rig::http_client::LazyBody<U> = Box::pin(async {
+                let bytes = response
+                    .bytes()
+                    .await
+                    .map_err(rig_instance_error)?;
+                Ok(U::from(bytes))
+            });
+
+            res.body(body).map_err(rig::http_client::Error::Protocol)
+        }
+    }
+
+    fn send_streaming<T>(
+        &self,
+        req: rig::http_client::Request<T>,
+    ) -> impl Future<Output = rig::http_client::Result<rig::http_client::StreamingResponse>> + Send
+    where
+        T: Into<Bytes>,
+    {
+        let (parts, body) = req.into_parts();
+        let body_bytes: Bytes = body.into();
+        let inner = self.inner.clone();
+
+        async move {
+            let req = inner
+                .request(parts.method, parts.uri.to_string())
+                .headers(parts.headers)
+                .body(body_bytes)
+                .build()
+                .map_err(rig_instance_error)?;
+
+            let response = inner.execute(req).await.map_err(rig_instance_error)?;
+            if !response.status().is_success() {
+                return Err(rig::http_client::Error::InvalidStatusCodeWithMessage(
+                    response.status(),
+                    response.text().await.unwrap_or_default(),
+                ));
+            }
+
+            let mut res = rig::http_client::Response::builder().status(response.status());
+            if let Some(hs) = res.headers_mut() {
+                *hs = response.headers().clone();
+            }
+
+            use futures::StreamExt;
+            use rig::wasm_compat::WasmCompatSendStream;
+            let mapped_stream: Pin<
+                Box<dyn WasmCompatSendStream<InnerItem = Result<Bytes, rig::http_client::Error>>>,
+            > = Box::pin(
+                response
+                    .bytes_stream()
+                    .map(|chunk| chunk.map_err(|e| rig::http_client::Error::Instance(Box::new(e)))),
+            );
+
+            res.body(mapped_stream)
+                .map_err(rig::http_client::Error::Protocol)
+        }
+    }
 }
 
 #[cfg(test)]
