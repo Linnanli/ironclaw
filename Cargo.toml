@@ -86,6 +86,9 @@ cron = "0.13"
 # Shared types
 ironclaw_common = { path = "crates/ironclaw_common", version = "0.1.0" }
 
+# Agent runtime domain model (Phase 3 Step D-0: messages moved from llm/provider.rs)
+x_claw_agent = { path = "../../crates/x_claw_agent", version = "0.1.0" }
+
 # Safety/sanitization
 ironclaw_safety = { path = "crates/ironclaw_safety", version = "0.2.0" }
 regex = "1"
