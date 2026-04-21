@@ -439,7 +439,15 @@ impl Scheduler {
                 let ctx = TaskContext::new(task_id).with_parent(parent_id);
 
                 tokio::spawn(async move {
-                    let result = handler.run(ctx).await;
+                    // Phase 3 D-1: TaskHandler::run now returns Box<dyn Error + Send + Sync>
+                    // (to keep x_claw_agent free of ironclaw-layer error types). Convert
+                    // back to ironclaw's Error here for the scheduler channel contract.
+                    let result = handler.run(ctx).await.map_err(|e| {
+                        Error::Job(JobError::ContextError {
+                            id: task_id,
+                            reason: format!("Background task handler failed: {e}"),
+                        })
+                    });
                     let _ = result_tx.send(result);
                 })
             }

@@ -17,7 +17,6 @@ use crate::agent::agentic_loop::{
     truncate_for_preview,
 };
 use crate::agent::scheduler::WorkerMessage;
-use crate::agent::task::TaskOutput;
 use crate::channels::web::types::ToolDecisionDto;
 use crate::context::{ContextManager, JobState};
 use crate::error::Error;
@@ -1771,18 +1770,11 @@ fn selections_to_tool_calls(selections: &[ToolSelection]) -> Vec<ToolCall> {
         .collect()
 }
 
-/// Convert a TaskOutput to a string result for tool execution.
-impl From<TaskOutput> for Result<String, Error> {
-    fn from(output: TaskOutput) -> Self {
-        serde_json::to_string_pretty(&output.result).map_err(|e| {
-            crate::error::ToolError::ExecutionFailed {
-                name: "task".to_string(),
-                reason: format!("Failed to serialize result: {}", e),
-            }
-            .into()
-        })
-    }
-}
+// Note: `impl From<TaskOutput> for Result<String, Error>` was removed during the
+// x_claw_agent extraction (Phase 3 Step D-1). `TaskOutput` now lives in the
+// external `x_claw_agent` crate, which trips Rust's orphan rules. The impl had
+// no call sites in the workspace; if a conversion is needed again, add a free
+// function here (`fn task_output_to_result(o: TaskOutput) -> Result<String, Error>`).
 
 #[cfg(test)]
 mod tests {
