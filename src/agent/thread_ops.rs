@@ -19,9 +19,10 @@ use crate::agent::submission::SubmissionResult;
 use crate::channels::{IncomingMessage, StatusUpdate};
 use crate::context::JobContext;
 use crate::error::Error;
-use crate::llm::{ChatMessage, ToolCall};
+use crate::llm::{ChatMessage, Reasoning, ToolCall};
 use crate::tools::redact_params;
 use ironclaw_common::truncate_preview;
+use x_claw_agent::WorkspaceWriter;
 
 const FORGED_THREAD_ID_ERROR: &str = "Invalid or unauthorized thread ID.";
 
@@ -384,9 +385,15 @@ impl Agent {
                     )
                     .await;
 
-                let compactor = ContextCompactor::new(self.llm().clone());
+                let compactor = ContextCompactor::new(Arc::new(Reasoning::new(
+                    self.llm().clone(),
+                )));
                 if let Err(e) = compactor
-                    .compact(thread, strategy, self.workspace().map(|w| w.as_ref()))
+                    .compact(
+                        thread,
+                        strategy,
+                        self.workspace().map(|w| w.as_ref() as &dyn WorkspaceWriter),
+                    )
                     .await
                 {
                     tracing::warn!("Auto-compaction failed: {}", e);
@@ -1080,9 +1087,13 @@ impl Agent {
                 crate::agent::context_monitor::CompactionStrategy::Summarize { keep_recent: 5 },
             );
 
-        let compactor = ContextCompactor::new(self.llm().clone());
+        let compactor = ContextCompactor::new(Arc::new(Reasoning::new(self.llm().clone())));
         match compactor
-            .compact(thread, strategy, self.workspace().map(|w| w.as_ref()))
+            .compact(
+                thread,
+                strategy,
+                self.workspace().map(|w| w.as_ref() as &dyn WorkspaceWriter),
+            )
             .await
         {
             Ok(result) => {
