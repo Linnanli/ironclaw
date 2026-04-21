@@ -30,6 +30,7 @@ mod session_manager;
 pub mod submission;
 pub mod task;
 mod thread_ops;
+mod traits_impl;
 pub mod undo;
 
 pub(crate) use agent_loop::truncate_for_preview;
