@@ -13,6 +13,9 @@ mod policy;
 mod sanitizer;
 mod validator;
 
+#[cfg(feature = "agent-hook")]
+pub mod agent_hook;
+
 pub use credential_detect::params_contain_manual_credentials;
 pub use leak_detector::{
     LeakAction, LeakDetectionError, LeakDetector, LeakMatch, LeakPattern, LeakScanResult,
@@ -203,6 +206,15 @@ impl SafetyLayer {
     /// Get the policy for direct access.
     pub fn policy(&self) -> &Policy {
         &self.policy
+    }
+
+    /// Get the leak detector for direct access.
+    ///
+    /// Exposed so that downstream adapters (e.g. the `agent-hook` feature)
+    /// can run secret scans without going through `sanitize_tool_output`
+    /// when they need the raw `scan_and_clean` result.
+    pub fn leak_detector(&self) -> &LeakDetector {
+        &self.leak_detector
     }
 }
 
