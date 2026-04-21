@@ -328,9 +328,22 @@ pub(crate) fn map_message_response(resp: MessageResponse) -> ToolCompletionRespo
                     reasoning: None,
                 });
             }
-            OutputContentBlock::Thinking { .. } | OutputContentBlock::RedactedThinking { .. } => {
-                // reasoning_content 暂不写入 content 文本，保留到下个版本处理
-                // （AgentEvent::Reasoning 由上层消费）
+            OutputContentBlock::Thinking { thinking, .. } => {
+                // 思考链：包装成 `<think>...</think>` 前置进 content，与 ironclaw
+                // 下游 reasoning pipeline（`strip_thinking_tags_regex` 等）既有
+                // 约定一致。空 thinking 不推（避免产生空 `<think></think>`）。
+                if !thinking.is_empty() {
+                    let wrapped = format!("<think>{thinking}</think>");
+                    if text.is_empty() {
+                        text = wrapped;
+                    } else {
+                        text = format!("{wrapped}\n{text}");
+                    }
+                }
+            }
+            OutputContentBlock::RedactedThinking { .. } => {
+                // redacted_thinking 是 Anthropic 的加密 payload，没有可读文本；
+                // 保留 drop 策略（下游任何消费者都拿不到可读内容）。
             }
         }
     }
@@ -813,6 +826,74 @@ mod tests {
         let out = map_message_response(resp);
         assert_eq!(out.cache_read_input_tokens, 80);
         assert_eq!(out.cache_creation_input_tokens, 15);
+    }
+
+    /// Thinking block 必须被包成 `<think>...</think>` 放在 Text 前面，与
+    /// ironclaw 下游 `strip_thinking_tags_regex` 的期望格式一致。
+    #[test]
+    fn test_response_thinking_block_wrapped_before_text() {
+        let resp = mk_resp(
+            vec![
+                OutputContentBlock::Thinking {
+                    thinking: "user wants weather; I should call the tool".into(),
+                    signature: None,
+                },
+                OutputContentBlock::Text {
+                    text: "Let me check the weather.".into(),
+                },
+            ],
+            Some("end_turn"),
+            Usage::default(),
+        );
+        let out = map_message_response(resp);
+        let content = out.content.expect("content should be Some");
+        assert!(
+            content.starts_with("<think>user wants weather; I should call the tool</think>"),
+            "think tag must lead the content, got: {content}"
+        );
+        assert!(
+            content.contains("Let me check the weather."),
+            "visible text must be preserved, got: {content}"
+        );
+    }
+
+    /// 只有 Thinking block、没有 Text 时，content 仍应是 `<think>...</think>`
+    /// 而不是空字符串——避免 agent loop 把空响应当作"沉默回复"。
+    #[test]
+    fn test_response_thinking_only_still_produces_content() {
+        let resp = mk_resp(
+            vec![OutputContentBlock::Thinking {
+                thinking: "reasoning in progress".into(),
+                signature: None,
+            }],
+            Some("end_turn"),
+            Usage::default(),
+        );
+        let out = map_message_response(resp);
+        assert_eq!(
+            out.content.as_deref(),
+            Some("<think>reasoning in progress</think>")
+        );
+    }
+
+    /// 空 Thinking block 不应该生成空 `<think></think>`（会污染下游正则）。
+    #[test]
+    fn test_response_empty_thinking_does_not_pollute_content() {
+        let resp = mk_resp(
+            vec![
+                OutputContentBlock::Thinking {
+                    thinking: String::new(),
+                    signature: None,
+                },
+                OutputContentBlock::Text {
+                    text: "hello".into(),
+                },
+            ],
+            Some("end_turn"),
+            Usage::default(),
+        );
+        let out = map_message_response(resp);
+        assert_eq!(out.content.as_deref(), Some("hello"));
     }
 
     // -------- chat request build --------
