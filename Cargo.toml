@@ -90,7 +90,7 @@ ironclaw_common = { path = "crates/ironclaw_common", version = "0.1.0" }
 x_claw_agent = { path = "../../crates/x_claw_agent", version = "0.1.0" }
 
 # Safety/sanitization
-ironclaw_safety = { path = "crates/ironclaw_safety", version = "0.2.0" }
+ironclaw_safety = { path = "crates/ironclaw_safety", version = "0.2.0", features = ["agent-hook"] }
 regex = "1"
 aho-corasick = "1"
 
