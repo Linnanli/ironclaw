@@ -63,6 +63,9 @@ pub mod keychain;
 mod store;
 mod types;
 
+/// `x_claw_agent::SecretProvider` adapter.
+pub mod agent_provider;
+
 pub use crypto::SecretsCrypto;
 #[cfg(feature = "libsql")]
 pub use store::LibSqlSecretsStore;
