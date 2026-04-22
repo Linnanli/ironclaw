@@ -92,6 +92,9 @@ pub mod error;
 pub mod manager;
 pub mod proxy;
 
+/// `x_claw_agent::SandboxExecutor` adapter.
+pub mod agent_executor;
+
 pub use config::{ResourceLimits, SandboxConfig, SandboxPolicy};
 pub use container::{ContainerOutput, ContainerRunner, connect_docker};
 pub use detect::{DockerDetection, DockerStatus, Platform, check_docker};
