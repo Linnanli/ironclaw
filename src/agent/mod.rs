@@ -26,7 +26,6 @@ pub mod routine_engine;
 pub(crate) mod scheduler;
 mod self_repair;
 pub mod session;
-mod session_manager;
 pub mod submission;
 pub mod task;
 mod thread_ops;
@@ -47,7 +46,10 @@ pub use routine_engine::{RoutineEngine, SandboxReadiness};
 pub use scheduler::{Scheduler, SchedulerDeps};
 pub use self_repair::{BrokenTool, RepairResult, RepairTask, SelfRepair, StuckJob};
 pub use session::{PendingApproval, PendingAuth, Session, Thread, ThreadState, Turn, TurnState};
-pub use session_manager::SessionManager;
+// `SessionManager` now lives in the `x_claw_agent` runtime crate (Phase 3
+// Step D-5, plan variant C'). Re-exported here for backward compatibility so
+// existing `crate::agent::SessionManager` call sites keep compiling.
+pub use x_claw_agent::SessionManager;
 pub use submission::{Submission, SubmissionParser, SubmissionResult};
 pub use task::{Task, TaskContext, TaskHandler, TaskOutput};
 pub use undo::{Checkpoint, UndoManager};

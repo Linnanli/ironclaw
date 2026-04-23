@@ -798,8 +798,13 @@ impl AppBuilder {
 
         // Create hook registry early so runtime extension activation can register hooks.
         let hooks = Arc::new(HookRegistry::new());
+        // `SessionManager::with_hooks` accepts `Arc<dyn SessionHooks>`; coerce
+        // the concrete `Arc<HookRegistry>` via unsize coercion (the bridge
+        // `impl SessionHooks for HookRegistry` lives in `crate::hooks`).
+        let hooks_for_session: Arc<HookRegistry> = Arc::clone(&hooks);
+        let session_hooks: Arc<dyn x_claw_agent::SessionHooks> = hooks_for_session;
         let agent_session_manager =
-            Arc::new(AgentSessionManager::new().with_hooks(Arc::clone(&hooks)));
+            Arc::new(AgentSessionManager::new().with_hooks(session_hooks));
 
         let (
             mcp_session_manager,
@@ -984,7 +989,9 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         hooks.register(Arc::new(SessionStartHook { tx })).await;
 
-        let manager = AgentSessionManager::new().with_hooks(Arc::clone(&hooks));
+        let manager = AgentSessionManager::new().with_hooks(
+            Arc::clone(&hooks) as Arc<dyn x_claw_agent::SessionHooks>,
+        );
         manager.get_or_create_session("user-123").await;
 
         let (user_id, session_id) =

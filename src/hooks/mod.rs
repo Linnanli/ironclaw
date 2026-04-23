@@ -23,3 +23,32 @@ pub use bundled::{
 };
 pub use hook::{Hook, HookContext, HookError, HookEvent, HookFailureMode, HookOutcome, HookPoint};
 pub use registry::HookRegistry;
+
+/// Bridge [`HookRegistry`] into the `x_claw_agent::SessionHooks` trait so
+/// `SessionManager` (in the runtime crate) can fire OnSessionStart /
+/// OnSessionEnd events without depending on ironclaw's concrete registry.
+///
+/// Errors from hook execution are logged and swallowed — session lifecycle
+/// must never be blocked by hook failures (fire-and-forget contract).
+#[async_trait::async_trait]
+impl x_claw_agent::SessionHooks for HookRegistry {
+    async fn on_session_start(&self, user_id: &str, session_id: &str) {
+        let event = HookEvent::SessionStart {
+            user_id: user_id.to_string(),
+            session_id: session_id.to_string(),
+        };
+        if let Err(e) = self.run(&event).await {
+            tracing::warn!("OnSessionStart hook error: {}", e);
+        }
+    }
+
+    async fn on_session_end(&self, user_id: &str, session_id: &str) {
+        let event = HookEvent::SessionEnd {
+            user_id: user_id.to_string(),
+            session_id: session_id.to_string(),
+        };
+        if let Err(e) = self.run(&event).await {
+            tracing::warn!("OnSessionEnd hook error: {}", e);
+        }
+    }
+}

@@ -17,9 +17,10 @@ use crate::agent::heartbeat::{spawn_heartbeat, spawn_multi_user_heartbeat};
 use crate::agent::routine_engine::{RoutineEngine, spawn_cron_ticker};
 use crate::agent::self_repair::{DefaultSelfRepair, RepairResult, SelfRepair};
 use crate::agent::session::ThreadState;
-use crate::agent::session_manager::SessionManager;
 use crate::agent::submission::{Submission, SubmissionParser, SubmissionResult};
-use crate::agent::{HeartbeatConfig as AgentHeartbeatConfig, Router, Scheduler, SchedulerDeps};
+use crate::agent::{
+    HeartbeatConfig as AgentHeartbeatConfig, Router, Scheduler, SchedulerDeps, SessionManager,
+};
 use crate::channels::{ChannelManager, IncomingMessage, OutgoingResponse, StatusUpdate};
 use crate::config::{AgentConfig, HeartbeatConfig, RoutineConfig, SkillsConfig};
 use crate::context::ContextManager;
