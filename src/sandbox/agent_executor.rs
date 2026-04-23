@@ -1,22 +1,25 @@
 //! `x_claw_agent::SandboxExecutor` adapter for [`SandboxManager`].
 //!
+//! > **⚠️ Phase 3 未接线 — 见 ADR-001**
+//! >
+//! > 本 adapter 在 D-3 阶段按"进程内 sandbox hook"假设建立，后经 E 阶段
+//! > 深入排查确认：上游 ironclaw 的真实沙箱架构是**进程外 daemon**
+//! > (`src/bridge/sandbox/` + `src/bin/sandbox_daemon.rs`)，而非在 agent
+//! > 主进程里 hook 一个 executor。本仓的 `SandboxManager`（engine v1）
+//! > 在 agent 主进程里 `SandboxManager::new` 调用次数 = 0，上游 main 一致。
+//! >
+//! > 决策（ADR-001）：
+//! > - Phase 3 **不把本 adapter 接入 `HookBundle.sandbox`**
+//! > - `hook_bundle_with_safety()` helper 里 `sandbox` 槽保持 `NoopSandboxExecutor`
+//! > - 真实沙箱能力对齐推到 Phase 4 E-2~E-7（port 上游 engine v2 + bridge + daemon）
+//! > - 本 adapter 保留不删，作为"若未来需要把 engine v1 `SandboxManager`
+//! >   挂进进程内 hook 的参考实现" + 错误假设的历史记录
+//! >
+//! > 相关文档：`docs/plans/architecture-refactor/adr-001-sandbox-hook-not-wired-in-phase3.md`
+//!
 //! This adapter lets the agent runtime (in `x_claw_agent`) drive bash
 //! execution and file I/O through ironclaw's Docker sandbox without taking
 //! a direct dependency on ironclaw internals.
-//!
-//! # Scope narrowing (vs. original 05b plan)
-//!
-//! The original Phase 3 Step E plan called for extracting `src/sandbox/`
-//! into a standalone `crates/ironclaw_sandbox/` crate. We instead follow
-//! the same Route-B discipline used in D-3/D-4: a clean trait seam at the
-//! `x_claw_agent` boundary is what the architecture needs. Extracting a
-//! separate crate would also force a simultaneous `ironclaw_secrets` crate
-//! extraction (sandbox uses `crate::secrets::CredentialMapping`), doubling
-//! scope for no additional boundary clarity.
-//!
-//! If a future need to ship sandbox independently arises (e.g. reuse from
-//! `admin-backend`), this adapter remains correct as-is — only the crate
-//! layout would change.
 //!
 //! # File I/O semantics
 //!
