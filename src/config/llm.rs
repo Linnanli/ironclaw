@@ -578,7 +578,7 @@ impl LlmConfig {
         let api_key = if api_key.is_none() && oauth_token.is_some() {
             // OAuth token present but no API key: use a placeholder so the
             // config block is populated. The provider factory will route to
-            // the OAuth provider instead of rig-core's x-api-key client.
+            // the OAuth provider instead of the x-api-key client.
             Some(SecretString::from(OAUTH_PLACEHOLDER.to_string()))
         } else {
             api_key

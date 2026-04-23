@@ -102,7 +102,7 @@ pub async fn create_llm_provider(
         return create_gemini_oauth_provider(config);
     }
 
-    // Bedrock uses a native AWS SDK, not the rig-core registry
+    // Bedrock uses a native AWS SDK, not the claw-code-api registry
     if config.backend == "bedrock" {
         #[cfg(feature = "bedrock")]
         {
@@ -167,16 +167,14 @@ pub fn create_llm_provider_with_config(
 /// Create a provider from a registry-resolved config.
 ///
 /// Dispatches on `RegistryProviderConfig::protocol` to build the appropriate
-/// rig-core client. This single function replaces what used to be 5 separate
+/// claw-code-api client. This single function replaces what used to be 5 separate
 /// `create_*_provider` functions.
 ///
-/// # Backend selection (Phase 2 migration)
+/// # Backend selection (post-Phase 2)
 ///
-/// When the `claw-code-llm` feature is built in **and** the environment
-/// variable `IRONCLAW_LLM_BACKEND=claw-code` is set, the function routes to
-/// [`claw_code_provider::ClawCodeLlmProvider`] — Phase 2 Step I 之后 rig-core
-/// 已被彻底移除，claw-code-api 是唯一生产路径（`GithubCopilot` / `CodexChatGpt`
-/// 使用各自独立的 provider，不走 claw-code）。
+/// Phase 2 Step I 之后 rig-core 已被彻底移除，[`claw_code_provider::ClawCodeLlmProvider`]
+/// 是 Anthropic / OpenAI / Ollama 协议的唯一生产路径。`GithubCopilot` 与
+/// `CodexChatGpt` 使用各自独立的 provider，不走 claw-code。
 pub fn create_registry_provider(
     config: &RegistryProviderConfig,
     request_timeout_secs: u64,

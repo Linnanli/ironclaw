@@ -246,9 +246,9 @@ This document tracks feature parity between IronClaw (Rust implementation) and O
 | NVIDIA API | ✅ | ✅ | P3 | Via `nvidia` adapter and `providers.json` |
 | OpenRouter | ✅ | ✅ | - | Via OpenAI-compatible provider (RigAdapter) |
 | Tinfoil | ❌ | ✅ | - | Private inference provider (IronClaw-only) |
-| OpenAI-compatible | ❌ | ✅ | - | Generic OpenAI-compatible endpoint (RigAdapter) |
+| OpenAI-compatible | ❌ | ✅ | - | Generic OpenAI-compatible endpoint (via `ClawCodeLlmProvider`) |
 | GitHub Copilot | ✅ | ✅ | - | Dedicated provider with OAuth token exchange (`GithubCopilotProvider`) |
-| Ollama (local) | ✅ | ✅ | - | via `rig::providers::ollama` (full support) |
+| Ollama (local) | ✅ | ✅ | - | via claw-code-api Ollama provider (full support) |
 | Perplexity | ✅ | ❌ | P3 | Freshness parameter for web_search |
 | MiniMax | ✅ | ❌ | P3 | Regional endpoint selection |
 | GLM-5 | ✅ | ✅ | P3 | Via Z.AI provider (`zai`) using OpenAI-compatible chat completions |
@@ -566,7 +566,7 @@ This document tracks feature parity between IronClaw (Rust implementation) and O
 ### P2 - Medium Priority
 
 - ❌ Media handling (images, PDFs)
-- ✅ Ollama/local model support (via rig::providers::ollama)
+- ✅ Ollama/local model support (via claw-code-api Ollama provider)
 - ❌ Configuration hot-reload
 - ✅ Tool-driven webhook ingress (`/webhook/tools/{tool}` -> host-verified + tool-normalized `system_event` routines)
 - ❌ Channel health monitor with auto-restart

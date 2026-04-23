@@ -212,7 +212,8 @@ default = ["postgres", "libsql", "html-to-markdown"]
 test-support = ["dep:tempfile"]
 # 历史遗留：Phase 2 Step I 之前用来切换 rig-core / claw-code-api 两套 LLM
 # 后端，现在 claw-code-api 是唯一路径，feature 名保留为空 no-op，避免下游
-# （如 desktop-client）触发构建失败。下一次整理时可直接删除。
+# （如 desktop-client）触发构建失败。下一次 minor 版本可同步删除该 feature
+# 与 desktop-client/Cargo.toml 中的 passthrough。
 claw-code-llm = []
 postgres = [
     "dep:deadpool-postgres",

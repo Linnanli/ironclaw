@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 /// API protocol a provider speaks.
 ///
-/// Determines which rig-core client constructor to use.
+/// Determines which claw-code-api client constructor to use.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderProtocol {
@@ -154,7 +154,7 @@ pub struct ProviderDefinition {
     pub aliases: Vec<String>,
     /// Which API protocol to use.
     pub protocol: ProviderProtocol,
-    /// Default base URL. `None` means use the rig-core default for the protocol.
+    /// Default base URL. `None` means use the claw-code-api default for the protocol.
     #[serde(default)]
     pub default_base_url: Option<String>,
     /// Env var for base URL override (e.g., "OPENAI_BASE_URL").

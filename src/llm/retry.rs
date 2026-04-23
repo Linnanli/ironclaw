@@ -64,8 +64,8 @@ pub(crate) fn is_retryable(err: &LlmError) -> bool {
 
 /// 判断错误信息是否来自 HTTP 5xx 服务端错误。
 fn is_server_error(reason: &str) -> bool {
-    // rig-core 格式: "HttpError: Invalid status code 5XX ..."
-    // reqwest 格式: "500 Internal Server Error" 或 "status code 500"
+    // 历史 rig-core 格式: "HttpError: Invalid status code 5XX ..."
+    // 当前 reqwest / claw-code-api 格式: "500 Internal Server Error" 或 "status code 500"
     reason.contains("status code 5")
         || reason.contains("500 ")
         || reason.contains("502 ")

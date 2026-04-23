@@ -5,7 +5,7 @@
 //! 1. A long-lived GitHub OAuth token (from device login or IDE sign-in)
 //! 2. A short-lived Copilot session token (exchanged via GitHub API)
 //!
-//! The standard OpenAI rig-core client sends `Authorization: Bearer <token>`
+//! The standard OpenAI Chat Completions client sends `Authorization: Bearer <token>`
 //! with the raw OAuth token, which gets rejected with "Authorization header
 //! is badly formatted". This provider handles the token exchange transparently.
 

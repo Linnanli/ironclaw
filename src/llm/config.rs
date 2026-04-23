@@ -23,7 +23,7 @@ pub const OAUTH_PLACEHOLDER: &str = "oauth-placeholder";
 /// Prompt cache retention policy for Anthropic.
 ///
 /// Controls Anthropic's automatic prompt caching via a top-level
-/// `cache_control` field injected through rig-core's `additional_params`.
+/// `cache_control` field injected through claw-code-api's request extensions.
 /// - `None` — caching disabled, no `cache_control` injected.
 /// - `Short` — 5-minute TTL (default), `{"type": "ephemeral"}`, 1.25× write surcharge.
 /// - `Long` — 1-hour TTL, `{"type": "ephemeral", "ttl": "1h"}`, 2× write surcharge.
@@ -69,10 +69,10 @@ impl std::fmt::Display for CacheRetention {
 /// This single struct replaces what used to be five separate config types
 /// (`OpenAiDirectConfig`, `AnthropicDirectConfig`, `OllamaConfig`,
 /// `OpenAiCompatibleConfig`, `TinfoilConfig`). The `protocol` field
-/// determines which rig-core client constructor to use.
+/// determines which claw-code-api client constructor to use.
 #[derive(Debug, Clone)]
 pub struct RegistryProviderConfig {
-    /// Which API protocol to use (determines the rig-core client).
+    /// Which API protocol to use (determines the claw-code-api client).
     pub protocol: ProviderProtocol,
     /// Provider identifier (e.g., "groq", "openai", "tinfoil").
     pub provider_id: String,
@@ -89,7 +89,7 @@ pub struct RegistryProviderConfig {
     /// When set, the provider factory routes to the OAuth-specific provider implementation.
     pub oauth_token: Option<SecretString>,
     /// When true, route OpenAI-compatible traffic to the Codex ChatGPT
-    /// Responses API provider instead of rig-core's Chat Completions path.
+    /// Responses API provider instead of the standard Chat Completions path.
     pub is_codex_chatgpt: bool,
     /// OAuth refresh token for Codex ChatGPT token refresh.
     pub refresh_token: Option<SecretString>,

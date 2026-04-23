@@ -2,7 +2,7 @@
 //!
 //! Implements `LlmProvider` by speaking the OpenAI Responses API protocol
 //! (`POST /responses`) used by the ChatGPT backend at
-//! `chatgpt.com/backend-api/codex`. This bypasses `rig-core`'s Chat
+//! `chatgpt.com/backend-api/codex`. This bypasses the standard Chat
 //! Completions path, which is incompatible with this endpoint.
 //!
 //! # Warning

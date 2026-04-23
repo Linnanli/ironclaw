@@ -23,7 +23,8 @@ Multi-provider LLM integration with circuit breaker, retry, failover, and respon
 | `failover.rs` | `FailoverProvider` — tries providers in order with per-provider cooldown |
 | `response_cache.rs` | In-memory LLM response cache with TTL and LRU eviction (keyed by SHA-256) |
 | `costs.rs` | Static per-model cost table (OpenAI, Anthropic, local/Ollama heuristics) |
-| `rig_adapter.rs` | Adapter bridging rig-core `CompletionModel` → `LlmProvider`; used by OpenAI, Anthropic, Ollama, Tinfoil |
+| `claw_code_provider.rs` | Adapter bridging `claw_code_api::Client` → `LlmProvider`; 唯一生产路径，接管 OpenAI / Anthropic / Ollama / OpenAI-compatible |
+| `schema_utils.rs` | OpenAI strict-mode schema 规范化工具（`normalize_schema_strict`），供 `claw_code_provider` / `openai_codex_provider` / `openai_streaming` 共用 |
 | `smart_routing.rs` | `SmartRoutingProvider` — 13-dimension complexity scorer routes cheap vs primary model |
 | `recording.rs` | `RecordingLlm` — trace capture for E2E replay testing (`IRONCLAW_RECORD_TRACE`) |
 | `bedrock.rs` | AWS Bedrock provider via native Converse API (feature-gated: `--features bedrock`) |
@@ -64,7 +65,7 @@ Uses the native Converse API via `aws-sdk-bedrockruntime` (`bedrock.rs`). Requir
 ## GitHub Copilot Provider Notes
 
 `github_copilot` uses a dedicated `GithubCopilotProvider` (`github_copilot.rs`) with
-direct HTTP via `reqwest::Client`. It cannot use `RigAdapter` because the Copilot API
+direct HTTP via `reqwest::Client`. It cannot reuse `ClawCodeLlmProvider` because the Copilot API
 requires a two-step authentication flow: a long-lived GitHub OAuth token is exchanged
 for a short-lived Copilot session token via `api.github.com/copilot_internal/v2/token`.
 The session token is cached and auto-refreshed before expiry by `CopilotTokenManager`
@@ -155,7 +156,7 @@ pub trait LlmProvider: Send + Sync {
 Key notes:
 - `model_name()` returns the configured model name; `active_model_name()` returns the currently active model (may differ if `set_model()` was called — only `NearAiChatProvider` supports this).
 - `cost_per_token()` returns `(Decimal, Decimal)` using `rust_decimal`. Look up via `costs::model_cost()` in your constructor; fall back to `costs::default_cost()` for unknowns.
-- `RigAdapter` ignores per-request model overrides (logs a warning). Only `NearAiChatProvider` supports per-request model overrides via `CompletionRequest::model`.
+- `RigAdapter` 已在 Phase 2 Step I 被删除，`ClawCodeLlmProvider` 同样忽略逐请求的 model override（打警告日志）。只有 `NearAiChatProvider` 支持 `CompletionRequest::model` 逐请求覆盖。
 - `complete_with_tools()` is never cached (tool calls can have side effects) — `CachedProvider` always passes them through.
 
 To add a new provider:
@@ -222,15 +223,16 @@ Raw provider
 
 `costs.rs` provides a static lookup table (`model_cost(model_id)`) returning `(input_cost, output_cost)` per token as `rust_decimal::Decimal`. Provider prefixes like `"openai/gpt-4o"` are stripped before lookup. Returns `None` for unknown models — callers should fall back to `default_cost()` (roughly GPT-4o pricing). Local model heuristic (`is_local_model()`) returns zero cost for Ollama-style identifiers (llama*, mistral*, `:latest`, `:instruct`, etc.).
 
-## rig_adapter.rs Details
+## claw_code_provider.rs Details
 
-`RigAdapter<M>` bridges any rig-core `CompletionModel` to `LlmProvider`. It is actively used in production for all non-NEAR AI providers (OpenAI, Anthropic, Ollama, Tinfoil, OpenAI-compatible). Key behaviors:
+`ClawCodeLlmProvider` bridges `claw_code_api::Client` to `LlmProvider`. **Phase 2 Step I 之后，它是 Anthropic / OpenAI / Ollama / OpenAI-compatible 的唯一生产路径**（`GithubCopilotProvider` 与 `OpenAiCodexProvider` 例外，使用独立实现）。Key behaviors:
 - **Per-request model overrides are silently ignored** (warning logged); the model is baked at construction time.
-- **OpenAI strict-mode schema normalization** is applied to all tool definitions: `additionalProperties: false`, all properties added to `required`, optional fields made nullable via `"type": ["T", "null"]`. This happens transparently at the provider boundary.
-- **System messages** are extracted into the rig-core `preamble` field (concatenated with newlines if multiple).
+- **OpenAI strict-mode schema normalization** is applied to all tool definitions via `schema_utils::normalize_schema_strict`: `additionalProperties: false`, all properties added to `required`, optional fields made nullable via `"type": ["T", "null"]`. This happens transparently at the provider boundary.
+- **System messages** are extracted into the claw-code-api `system` field (concatenated with newlines if multiple).
 - **Tool call IDs** are generated (`generated_tool_call_{seed}`) if the provider returns empty/whitespace IDs.
 - **Tool name normalization**: strips `proxy_` prefix if it matches a known tool (handles some proxy implementations).
-- **OpenAI uses Chat Completions API** (`completions_api()`), not the newer Responses API — the Responses API path panics when tool results are sent back (rig-core doesn't thread `call_id` through `ToolCall`).
+- **OpenAI uses Chat Completions API** (`/v1/chat/completions`), not the newer Responses API — the Responses API path is reserved for `OpenAiCodexProvider`.
+- **DashScope `reasoning_content` 原生支持**：claw-code-api 的 `openai_compat` provider hook 点接管，无需 `ReasoningPatchClient` 打 JSON 补丁。
 
 ## Streaming Support
 
