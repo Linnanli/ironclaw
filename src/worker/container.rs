@@ -190,10 +190,13 @@ Work independently to complete this job. When finished, your final message MUST 
                 &delegate,
                 &mut reason_ctx,
                 &config,
-                // TODO(phase3-step-g): replace with a real HookBundle
-                // carrying `ironclaw_safety::agent_hook::SafetyLayerHook`,
-                // sandbox executor, secret provider and approval gate.
-                &x_claw_agent::HookBundle::noop(),
+                // Phase 3 Step G: SafetyLayer wired in via IronclawSafetyHook.
+                // sandbox/secrets/approval still default; container worker is
+                // already inside Docker (no nested sandbox needed) and runs
+                // unattended (auto-approve).
+                &crate::agent::agentic_loop::hook_bundle_with_safety(
+                    self.safety.clone(),
+                ),
             )
             .await
         })

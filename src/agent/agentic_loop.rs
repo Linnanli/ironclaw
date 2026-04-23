@@ -40,3 +40,22 @@ pub(crate) fn host_err_to_error(e: HostError) -> crate::error::Error {
         .into(),
     }
 }
+
+/// Build an `x_claw_agent::HookBundle` whose `safety` slot is wired to
+/// the ironclaw [`crate::safety::SafetyLayer`] via
+/// [`ironclaw_safety::agent_hook::IronclawSafetyHook`].
+///
+/// `sandbox` / `secrets` / `approval` keep their `Noop` / `InMemory` /
+/// `AutoApprove` defaults — they will be wired in by later Phase 3 steps.
+/// This helper exists so every consumer (chat dispatcher, job worker,
+/// container worker) constructs an identical bundle and we do not lose
+/// the safety boundary the moment any one call site forgets to plug it in.
+pub fn hook_bundle_with_safety(
+    safety: std::sync::Arc<crate::safety::SafetyLayer>,
+) -> x_claw_agent::HookBundle {
+    let mut bundle = x_claw_agent::HookBundle::noop();
+    bundle.safety = std::sync::Arc::new(
+        ironclaw_safety::agent_hook::IronclawSafetyHook::new(safety),
+    );
+    bundle
+}

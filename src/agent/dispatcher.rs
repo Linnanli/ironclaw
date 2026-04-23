@@ -281,9 +281,8 @@ impl Agent {
             &delegate,
             &mut reason_ctx,
             &loop_config,
-            // TODO(phase3-step-g): replace with real HookBundle wiring
-            // SafetyLayer/Sandbox/Secrets/Approval from the host.
-            &x_claw_agent::HookBundle::noop(),
+            // Phase 3 Step G: SafetyLayer wired in via IronclawSafetyHook.
+            &crate::agent::agentic_loop::hook_bundle_with_safety(self.safety().clone()),
         )
         .await
         .map_err(crate::agent::agentic_loop::host_err_to_error)?;
