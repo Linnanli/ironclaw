@@ -33,4 +33,5 @@ default = []
 agent-hook = ["dep:async-trait", "dep:x_claw_agent"]
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "sync"] }
+async-trait = "0.1"
