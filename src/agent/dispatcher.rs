@@ -282,7 +282,14 @@ impl Agent {
             &mut reason_ctx,
             &loop_config,
             // Phase 3 Step G: SafetyLayer wired in via IronclawSafetyHook.
-            &crate::agent::agentic_loop::hook_bundle_with_safety(self.safety().clone()),
+            // Phase 3 Step F: SecretsStore on the tool registry now also
+            // flows into `bundle.secrets` so the agent hook layer can read
+            // user-scoped secrets without going through the tool path.
+            &crate::agent::agentic_loop::hook_bundle_with_safety_and_secrets(
+                self.safety().clone(),
+                &self.deps.tools,
+                &message.user_id,
+            ),
         )
         .await
         .map_err(crate::agent::agentic_loop::host_err_to_error)?;

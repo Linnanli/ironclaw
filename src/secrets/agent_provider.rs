@@ -4,6 +4,17 @@
 //! ironclaw's encrypted secrets store without depending on ironclaw
 //! internals (PostgreSQL pool, crypto keys, user-id plumbing).
 //!
+//! # Wiring status (Phase 3)
+//!
+//! - ✅ **Wired for interactive chat** via `Agent::run_agentic_loop`
+//!   (uses `hook_bundle_with_safety_and_secrets` with `message.user_id`).
+//! - ✅ **Wired for local job worker** via `Worker::execution_loop`
+//!   (uses `hook_bundle_with_safety_and_secrets` with `JobContext.user_id`).
+//! - ⚠️  **Intentionally NOT wired** for the container worker
+//!   (`worker/container.rs`) — it runs inside a Docker container where
+//!   secrets are injected at container-provisioning time, not through
+//!   the per-call hook bundle.
+//!
 //! # Scope narrowing (same rationale as Step E)
 //!
 //! Phase 3 Step F originally called for extracting `src/secrets/` into a
@@ -40,13 +51,16 @@ use crate::secrets::types::SecretError as IronclawSecretError;
 /// `user_id` scopes every lookup; the underlying store enforces per-user
 /// isolation. The agent runtime is deliberately not exposed to cross-user
 /// secret access.
+///
+/// `S: ?Sized` is required so callers can pass `Arc<dyn SecretsStore + Send + Sync>`
+/// (trait-object form used throughout the tool registry).
 #[derive(Clone)]
-pub struct AgentSecrets<S: SecretsStore + 'static> {
+pub struct AgentSecrets<S: SecretsStore + ?Sized + 'static> {
     store: Arc<S>,
     user_id: String,
 }
 
-impl<S: SecretsStore + 'static> AgentSecrets<S> {
+impl<S: SecretsStore + ?Sized + 'static> AgentSecrets<S> {
     pub fn new(store: Arc<S>, user_id: impl Into<String>) -> Self {
         Self {
             store,
@@ -60,7 +74,7 @@ impl<S: SecretsStore + 'static> AgentSecrets<S> {
 }
 
 #[async_trait]
-impl<S: SecretsStore + 'static> SecretProvider for AgentSecrets<S> {
+impl<S: SecretsStore + ?Sized + 'static> SecretProvider for AgentSecrets<S> {
     async fn get(&self, key: &str) -> Result<Option<SecretString>, AgentSecretError> {
         match self.store.get_decrypted(&self.user_id, key).await {
             Ok(decrypted) => Ok(Some(SecretString::new(decrypted.expose().to_string()))),

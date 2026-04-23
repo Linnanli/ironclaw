@@ -429,12 +429,29 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
             max_tool_intent_nudges: 2,
         };
 
+        // Resolve the user_id once here so the secrets hook is scoped to
+        // the job owner. If the context is unreachable (shouldn't happen
+        // at this point) fall back to "unknown" — AgentSecrets will then
+        // simply return None for every key (fail-safe, no leak).
+        let job_user_id = self
+            .context_manager()
+            .get_context(self.job_id)
+            .await
+            .map(|ctx| ctx.user_id.clone())
+            .unwrap_or_else(|_| "unknown".to_string());
+
         let outcome = run_agentic_loop(
             &delegate,
             reason_ctx,
             &config,
             // Phase 3 Step G: SafetyLayer wired in via IronclawSafetyHook.
-            &crate::agent::agentic_loop::hook_bundle_with_safety(self.safety().clone()),
+            // Phase 3 Step F: SecretsStore wired in via AgentSecrets,
+            // scoped to the job owner (resolved just above).
+            &crate::agent::agentic_loop::hook_bundle_with_safety_and_secrets(
+                self.safety().clone(),
+                self.tools(),
+                &job_user_id,
+            ),
         )
         .await
         .map_err(crate::agent::agentic_loop::host_err_to_error)?;
