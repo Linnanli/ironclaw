@@ -186,7 +186,16 @@ Work independently to complete this job. When finished, your final message MUST 
                 max_tool_intent_nudges: 2,
             };
 
-            crate::agent::agentic_loop::run_agentic_loop(&delegate, &mut reason_ctx, &config).await
+            crate::agent::agentic_loop::run_agentic_loop(
+                &delegate,
+                &mut reason_ctx,
+                &config,
+                // TODO(phase3-step-g): replace with a real HookBundle
+                // carrying `ironclaw_safety::agent_hook::SafetyLayerHook`,
+                // sandbox executor, secret provider and approval gate.
+                &x_claw_agent::HookBundle::noop(),
+            )
+            .await
         })
         .await;
 

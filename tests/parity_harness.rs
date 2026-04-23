@@ -60,12 +60,17 @@ struct ParityDelegate {
     tools: Arc<ToolRegistry>,
     safety: Arc<SafetyLayer>,
     job_ctx: JobContext,
+    reasoning: Arc<Reasoning>,
     tool_records: Arc<Mutex<Vec<ToolRecord>>>,
     iterations: AtomicUsize,
 }
 
 impl ParityDelegate {
-    fn new(tools: Arc<ToolRegistry>, _workspace_dir: &std::path::Path) -> Self {
+    fn new(
+        tools: Arc<ToolRegistry>,
+        reasoning: Arc<Reasoning>,
+        _workspace_dir: &std::path::Path,
+    ) -> Self {
         let safety = Arc::new(SafetyLayer::new(&SafetyConfig {
             max_output_length: 100_000,
             injection_check_enabled: false,
@@ -75,6 +80,7 @@ impl ParityDelegate {
             tools,
             safety,
             job_ctx,
+            reasoning,
             tool_records: Arc::new(Mutex::new(Vec::new())),
             iterations: AtomicUsize::new(0),
         }
@@ -101,15 +107,14 @@ impl LoopDelegate for ParityDelegate {
 
     async fn call_llm(
         &self,
-        reasoning: &Reasoning,
         reason_ctx: &mut ReasoningContext,
         _iteration: usize,
-    ) -> Result<RespondOutput, Error> {
+    ) -> Result<RespondOutput, x_claw_agent::HostError> {
         self.iterations.fetch_add(1, Ordering::SeqCst);
-        reasoning
+        self.reasoning
             .respond_with_tools(reason_ctx)
             .await
-            .map_err(|e| e.into())
+            .map_err(|e| -> x_claw_agent::HostError { Box::new(Error::from(e)) })
     }
 
     async fn handle_text_response(
@@ -126,7 +131,7 @@ impl LoopDelegate for ParityDelegate {
         tool_calls: Vec<ToolCall>,
         _content: Option<String>,
         reason_ctx: &mut ReasoningContext,
-    ) -> Result<Option<LoopOutcome>, Error> {
+    ) -> Result<Option<LoopOutcome>, x_claw_agent::HostError> {
         for tc in &tool_calls {
             let result = execute_tool_with_safety(
                 &self.tools,
@@ -174,8 +179,10 @@ async fn run_scenario(
     tools.register_builtin_tools();
     tools.register_dev_tools();
 
-    let reasoning = Reasoning::new(Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>);
-    let delegate = ParityDelegate::new(Arc::clone(&tools), workspace);
+    let reasoning = Arc::new(Reasoning::new(
+        Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>,
+    ));
+    let delegate = ParityDelegate::new(Arc::clone(&tools), Arc::clone(&reasoning), workspace);
 
     let mut ctx = ReasoningContext::new();
     ctx.available_tools = tool_defs;
@@ -187,7 +194,7 @@ async fn run_scenario(
         max_tool_intent_nudges: 0,
     };
 
-    let outcome = run_agentic_loop(&delegate, &reasoning, &mut ctx, &config)
+    let outcome = run_agentic_loop(&delegate, &mut ctx, &config, &x_claw_agent::HookBundle::noop())
         .await
         .expect("agentic loop should not fail");
 
@@ -214,7 +221,9 @@ async fn run_scenario_with_job_ctx(
     tools.register_builtin_tools();
     tools.register_dev_tools();
 
-    let reasoning = Reasoning::new(Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>);
+    let reasoning = Arc::new(Reasoning::new(
+        Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>,
+    ));
     let delegate = ParityDelegate {
         tools: Arc::clone(&tools),
         safety: Arc::new(SafetyLayer::new(&SafetyConfig {
@@ -222,6 +231,7 @@ async fn run_scenario_with_job_ctx(
             injection_check_enabled: false,
         })),
         job_ctx,
+        reasoning: Arc::clone(&reasoning),
         tool_records: Arc::new(Mutex::new(Vec::new())),
         iterations: AtomicUsize::new(0),
     };
@@ -236,7 +246,7 @@ async fn run_scenario_with_job_ctx(
         max_tool_intent_nudges: 0,
     };
 
-    let outcome = run_agentic_loop(&delegate, &reasoning, &mut ctx, &config)
+    let outcome = run_agentic_loop(&delegate, &mut ctx, &config, &x_claw_agent::HookBundle::noop())
         .await
         .expect("agentic loop should not fail");
 
@@ -1377,8 +1387,10 @@ async fn ps_029_max_iterations_reached() {
     tools.register_builtin_tools();
     tools.register_dev_tools();
 
-    let reasoning = Reasoning::new(Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>);
-    let delegate = ParityDelegate::new(Arc::clone(&tools), dir.path());
+    let reasoning = Arc::new(Reasoning::new(
+        Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>,
+    ));
+    let delegate = ParityDelegate::new(Arc::clone(&tools), Arc::clone(&reasoning), dir.path());
 
     let mut ctx = ReasoningContext::new();
     ctx.available_tools = vec![echo_def()];
@@ -1390,7 +1402,7 @@ async fn ps_029_max_iterations_reached() {
         max_tool_intent_nudges: 0,
     };
 
-    let outcome = run_agentic_loop(&delegate, &reasoning, &mut ctx, &config)
+    let outcome = run_agentic_loop(&delegate, &mut ctx, &config, &x_claw_agent::HookBundle::noop())
         .await
         .expect("loop should not error");
 
@@ -1419,8 +1431,10 @@ async fn ps_030_token_usage_tracked() {
     let tools = Arc::new(ToolRegistry::new());
     tools.register_builtin_tools();
 
-    let reasoning = Reasoning::new(Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>);
-    let delegate = ParityDelegate::new(Arc::clone(&tools), dir.path());
+    let reasoning = Arc::new(Reasoning::new(
+        Arc::clone(&llm) as Arc<dyn ironclaw::llm::LlmProvider>,
+    ));
+    let delegate = ParityDelegate::new(Arc::clone(&tools), Arc::clone(&reasoning), dir.path());
 
     let mut ctx = ReasoningContext::new();
     ctx.system_prompt = Some("Token test.".to_string());
@@ -1431,7 +1445,7 @@ async fn ps_030_token_usage_tracked() {
         max_tool_intent_nudges: 0,
     };
 
-    let outcome = run_agentic_loop(&delegate, &reasoning, &mut ctx, &config)
+    let outcome = run_agentic_loop(&delegate, &mut ctx, &config, &x_claw_agent::HookBundle::noop())
         .await
         .expect("loop ok");
 

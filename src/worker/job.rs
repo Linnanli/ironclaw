@@ -429,9 +429,16 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
             max_tool_intent_nudges: 2,
         };
 
-        let outcome = run_agentic_loop(&delegate, reason_ctx, &config)
-            .await
-            .map_err(crate::agent::agentic_loop::host_err_to_error)?;
+        let outcome = run_agentic_loop(
+            &delegate,
+            reason_ctx,
+            &config,
+            // TODO(phase3-step-g): wire real HookBundle (SafetyLayer,
+            // Sandbox, Secrets, Approval) instead of noop defaults.
+            &x_claw_agent::HookBundle::noop(),
+        )
+        .await
+        .map_err(crate::agent::agentic_loop::host_err_to_error)?;
 
         match outcome {
             LoopOutcome::Response(_) => {
