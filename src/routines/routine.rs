@@ -929,7 +929,7 @@ pub fn describe_cron(schedule: &str, timezone: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::agent::routine::{
+    use crate::routines::routine::{
         MAX_TOOL_ROUNDS_LIMIT, NotifyConfig, Routine, RoutineAction, RoutineGuardrails,
         RoutineVerificationStatus, RunStatus, Trigger, apply_routine_verification_result,
         content_hash, describe_cron, next_cron_fire, normalize_cron_expression,

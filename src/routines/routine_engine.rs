@@ -21,11 +21,6 @@ use tokio::sync::{RwLock, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use crate::agent::Scheduler;
-use crate::agent::routine::{
-    NotifyConfig, Routine, RoutineAction, RoutineRun, RunStatus, Trigger,
-    apply_routine_verification_result, next_cron_fire, routine_verification_fingerprint,
-};
 use crate::channels::{IncomingMessage, OutgoingResponse};
 use crate::config::RoutineConfig;
 use crate::context::{JobContext, JobState};
@@ -34,6 +29,11 @@ use crate::extensions::ExtensionManager;
 use crate::llm::{
     ChatMessage, CompletionRequest, FinishReason, LlmProvider, ToolCall, ToolCompletionRequest,
 };
+use crate::routines::routine::{
+    NotifyConfig, Routine, RoutineAction, RoutineRun, RunStatus, Trigger,
+    apply_routine_verification_result, next_cron_fire, routine_verification_fingerprint,
+};
+use crate::routines::scheduler::Scheduler;
 use crate::tenant::AdminScope;
 use crate::tools::{
     ToolError, ToolRegistry, autonomous_allowed_tool_names, autonomous_unavailable_message,
@@ -410,7 +410,7 @@ impl RoutineEngine {
             for (key, expected) in filters {
                 let Some(actual) = payload
                     .get(key)
-                    .and_then(crate::agent::routine::json_value_as_filter_string)
+                    .and_then(super::routine::json_value_as_filter_string)
                 else {
                     tracing::debug!(routine = %routine.name, filter_key = %key, "Filter key not found in payload");
                     matched = false;
@@ -2002,7 +2002,7 @@ mod tests {
     use chrono::Utc;
     use uuid::Uuid;
 
-    use crate::agent::routine::{
+    use super::super::routine::{
         NotifyConfig, Routine, RoutineAction, RoutineGuardrails, RunStatus, Trigger,
     };
     use crate::channels::IncomingMessage;

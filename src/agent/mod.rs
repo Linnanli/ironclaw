@@ -16,21 +16,28 @@ mod attachments;
 mod commands;
 pub mod compaction;
 pub mod context_monitor;
-pub mod cost_guard;
 mod dispatcher;
-mod heartbeat;
-pub mod job_monitor;
 mod router;
-pub mod routine;
-pub mod routine_engine;
-pub(crate) mod scheduler;
-mod self_repair;
 pub mod session;
 pub mod submission;
 pub mod task;
 mod thread_ops;
 mod traits_impl;
 pub mod undo;
+
+// Phase 3 plan H'' (2026-04-23): The routines / guardrails subsystem
+// (routine, routine_engine, scheduler, self_repair, cost_guard, heartbeat,
+// job_monitor) now lives under `crate::routines::*`. The following
+// re-exports preserve the historical `crate::agent::{...}` module paths so
+// downstream call sites (channels/web, db, tools/builtin, cli, etc.) do not
+// need to be rewritten.
+pub use crate::routines::cost_guard;
+pub use crate::routines::heartbeat;
+pub use crate::routines::job_monitor;
+pub use crate::routines::routine;
+pub use crate::routines::routine_engine;
+pub(crate) use crate::routines::scheduler;
+pub use crate::routines::self_repair;
 
 pub(crate) use agent_loop::truncate_for_preview;
 pub use agent_loop::{Agent, AgentDeps};
