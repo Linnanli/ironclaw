@@ -1518,6 +1518,7 @@ async fn sp_001_path_traversal_rejected() {
 /// tool is configured with_base_dir(workspace_root) which catches symlink
 /// escapes via canonicalize + starts_with. This test will pass once the
 /// parity harness registers tools with a sandbox base_dir.
+#[cfg(unix)]
 #[tokio::test]
 #[ignore = "requires sandbox base_dir — see SP-002 comment"]
 async fn sp_002_symlink_escape_rejected() {
