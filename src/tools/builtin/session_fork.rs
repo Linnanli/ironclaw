@@ -151,10 +151,7 @@ mod tests {
     #[tokio::test]
     async fn test_fork_missing_at_turn() {
         let tool = SessionForkTool::new();
-        let err = tool
-            .execute(json!({}), &test_ctx())
-            .await
-            .unwrap_err();
+        let err = tool.execute(json!({}), &test_ctx()).await.unwrap_err();
         assert!(matches!(err, ToolError::InvalidParameters(_)));
     }
 

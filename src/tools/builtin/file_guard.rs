@@ -28,10 +28,7 @@ pub const BINARY_SNIFF_SIZE: usize = 8192;
 pub fn check_symlink_escape(path: &Path, workspace_root: &Path) -> Result<PathBuf, ToolError> {
     // Delegate heavy lifting to validate_path which already handles
     // canonicalize + ancestor walk-up for non-existent paths.
-    validate_path(
-        &path.to_string_lossy(),
-        Some(workspace_root),
-    )
+    validate_path(&path.to_string_lossy(), Some(workspace_root))
 }
 
 // ── Binary Detection ────────────────────────────────────────────────────

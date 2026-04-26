@@ -54,9 +54,8 @@ pub fn hook_bundle_with_safety(
     safety: std::sync::Arc<crate::safety::SafetyLayer>,
 ) -> x_claw_agent::HookBundle {
     let mut bundle = x_claw_agent::HookBundle::noop();
-    bundle.safety = std::sync::Arc::new(
-        ironclaw_safety::agent_hook::IronclawSafetyHook::new(safety),
-    );
+    bundle.safety =
+        std::sync::Arc::new(ironclaw_safety::agent_hook::IronclawSafetyHook::new(safety));
     bundle
 }
 
@@ -81,9 +80,10 @@ pub fn hook_bundle_with_safety_and_secrets(
 ) -> x_claw_agent::HookBundle {
     let mut bundle = hook_bundle_with_safety(safety);
     if let Some(store) = tools.secrets_store() {
-        bundle.secrets = std::sync::Arc::new(
-            crate::secrets::agent_provider::AgentSecrets::new(store.clone(), user_id),
-        );
+        bundle.secrets = std::sync::Arc::new(crate::secrets::agent_provider::AgentSecrets::new(
+            store.clone(),
+            user_id,
+        ));
     }
     bundle
 }
@@ -134,14 +134,16 @@ mod tests {
         let bundle = hook_bundle_with_safety(safety_layer());
         // The noop secret provider returns None for any key (never errors).
         let got = bundle.secrets.get("any_key").await.unwrap();
-        assert!(got.is_none(), "safety-only helper must leave secrets as noop");
+        assert!(
+            got.is_none(),
+            "safety-only helper must leave secrets as noop"
+        );
     }
 
     #[tokio::test]
     async fn with_secrets_helper_exposes_registered_secret() {
         let tools = registry_with_secret("alice", "openai_key", "sk-live-abc").await;
-        let bundle =
-            hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "alice");
+        let bundle = hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "alice");
         let got = bundle
             .secrets
             .get("openai_key")
@@ -154,8 +156,7 @@ mod tests {
     #[tokio::test]
     async fn with_secrets_helper_isolates_by_user_id() {
         let tools = registry_with_secret("alice", "alice_only", "A").await;
-        let bundle =
-            hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "bob");
+        let bundle = hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "bob");
         // Bob must not see alice's secrets.
         let got = bundle.secrets.get("alice_only").await.unwrap();
         assert!(
@@ -168,8 +169,7 @@ mod tests {
     async fn with_secrets_helper_falls_back_to_noop_when_registry_has_no_store() {
         // A registry built without `.with_credentials(...)` has no SecretsStore.
         let tools = registry_without_secrets();
-        let bundle =
-            hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "alice");
+        let bundle = hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "alice");
         let got = bundle.secrets.get("anything").await.unwrap();
         assert!(
             got.is_none(),
@@ -182,8 +182,7 @@ mod tests {
     #[tokio::test]
     async fn with_secrets_helper_preserves_safety_wiring() {
         let tools = registry_with_secret("alice", "k", "v").await;
-        let bundle =
-            hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "alice");
+        let bundle = hook_bundle_with_safety_and_secrets(safety_layer(), &tools, "alice");
         // Exact identity check is not possible across Arc<dyn Trait>, but we
         // can at least assert the safety Arc pointer count > 1 (we hold one,
         // bundle holds one → 2).

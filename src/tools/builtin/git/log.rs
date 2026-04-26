@@ -3,9 +3,7 @@
 use std::time::Instant;
 
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 use super::runner::{resolve_workdir, run_git};
 
@@ -140,9 +138,7 @@ mod tests {
     async fn test_git_log_with_limit() {
         let tool = GitLogTool::new();
         let ctx = make_ctx();
-        let result = tool
-            .execute(serde_json::json!({"limit": 3}), &ctx)
-            .await;
+        let result = tool.execute(serde_json::json!({"limit": 3}), &ctx).await;
         match result {
             Ok(output) => {
                 let text = output.result.as_str().unwrap_or_default();

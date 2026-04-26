@@ -171,7 +171,10 @@ mod tests {
         let provider = setup().await;
         let mut names = provider.list_names().await.unwrap();
         names.sort();
-        assert_eq!(names, vec!["anthropic_key".to_string(), "openai_key".to_string()]);
+        assert_eq!(
+            names,
+            vec!["anthropic_key".to_string(), "openai_key".to_string()]
+        );
     }
 
     #[tokio::test]

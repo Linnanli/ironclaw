@@ -288,7 +288,9 @@ fn is_path_safe_minimal(path: &str) -> bool {
     // - Two-dot leader (U+2025 ‥) may be confused with '..'
     // - Halfwidth solidus (U+FF0F) and other separator lookalikes
     for ch in path.chars() {
-        if matches!(ch, '\u{FF0E}' | '\u{FF0F}' | '\u{FF3C}' | '\u{2025}'
+        if matches!(
+            ch,
+            '\u{FF0E}' | '\u{FF0F}' | '\u{FF3C}' | '\u{2025}'
             | '\u{2024}' // One dot leader
             | '\u{FE52}' // Small full stop
             | '\u{2044}' // Fraction slash
@@ -532,38 +534,36 @@ mod tests {
         std::fs::create_dir_all(dir.path().join("src")).unwrap();
         std::fs::write(dir.path().join(".env"), "SECRET=x").unwrap();
 
-        let policy = PathPolicy::new(
-            &[".env*".to_string(), "**/*.pem".to_string()],
-            &[],
-        )
-        .unwrap();
+        let policy = PathPolicy::new(&[".env*".to_string(), "**/*.pem".to_string()], &[]).unwrap();
 
         // .env is denied
         let resolved = dir.path().join(".env");
-        assert!(policy
-            .check(&resolved, Some(dir.path()), AccessMode::Read)
-            .is_err());
+        assert!(
+            policy
+                .check(&resolved, Some(dir.path()), AccessMode::Read)
+                .is_err()
+        );
 
         // src/foo.rs is allowed
         let resolved = dir.path().join("src/foo.rs");
-        assert!(policy
-            .check(&resolved, Some(dir.path()), AccessMode::Write)
-            .is_ok());
+        assert!(
+            policy
+                .check(&resolved, Some(dir.path()), AccessMode::Write)
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_policy_denies_pem_by_glob() {
         let dir = tempdir().unwrap();
-        let policy = PathPolicy::new(
-            &["**/*.pem".to_string()],
-            &[],
-        )
-        .unwrap();
+        let policy = PathPolicy::new(&["**/*.pem".to_string()], &[]).unwrap();
 
         let resolved = dir.path().join("certs/server.pem");
-        assert!(policy
-            .check(&resolved, Some(dir.path()), AccessMode::Read)
-            .is_err());
+        assert!(
+            policy
+                .check(&resolved, Some(dir.path()), AccessMode::Read)
+                .is_err()
+        );
     }
 
     #[test]
@@ -572,14 +572,18 @@ mod tests {
         let policy = PathPolicy::new(&[], &["/etc/hosts".to_string()]).unwrap();
 
         // Read outside sandbox is allowed if in external list
-        assert!(policy
-            .check(Path::new("/etc/hosts"), Some(dir.path()), AccessMode::Read)
-            .is_ok());
+        assert!(
+            policy
+                .check(Path::new("/etc/hosts"), Some(dir.path()), AccessMode::Read)
+                .is_ok()
+        );
 
         // Write outside sandbox is always denied
-        assert!(policy
-            .check(Path::new("/etc/hosts"), Some(dir.path()), AccessMode::Write)
-            .is_err());
+        assert!(
+            policy
+                .check(Path::new("/etc/hosts"), Some(dir.path()), AccessMode::Write)
+                .is_err()
+        );
     }
 
     #[test]
@@ -588,9 +592,11 @@ mod tests {
         let policy = PathPolicy::new(&[], &["/etc/hosts".to_string()]).unwrap();
 
         // /etc/passwd is NOT in external_read_only
-        assert!(policy
-            .check(Path::new("/etc/passwd"), Some(dir.path()), AccessMode::Read)
-            .is_err());
+        assert!(
+            policy
+                .check(Path::new("/etc/passwd"), Some(dir.path()), AccessMode::Read)
+                .is_err()
+        );
     }
 
     #[test]
@@ -599,12 +605,16 @@ mod tests {
         let policy = PathPolicy::new(&[], &[]).unwrap();
 
         let resolved = dir.path().join(".env");
-        assert!(policy
-            .check(&resolved, Some(dir.path()), AccessMode::Read)
-            .is_ok());
-        assert!(policy
-            .check(&resolved, Some(dir.path()), AccessMode::Write)
-            .is_ok());
+        assert!(
+            policy
+                .check(&resolved, Some(dir.path()), AccessMode::Read)
+                .is_ok()
+        );
+        assert!(
+            policy
+                .check(&resolved, Some(dir.path()), AccessMode::Write)
+                .is_ok()
+        );
     }
 
     // ── validate_path_with_policy tests ──
@@ -612,12 +622,8 @@ mod tests {
     #[test]
     fn test_with_policy_none_same_as_validate_path() {
         let dir = tempdir().unwrap();
-        let result = validate_path_with_policy(
-            "subdir/file.txt",
-            Some(dir.path()),
-            None,
-            AccessMode::Read,
-        );
+        let result =
+            validate_path_with_policy("subdir/file.txt", Some(dir.path()), None, AccessMode::Read);
         assert!(result.is_ok());
     }
 
@@ -627,19 +633,10 @@ mod tests {
         std::fs::write(dir.path().join(".env"), "x").unwrap();
         let policy = PathPolicy::new(&[".env*".to_string()], &[]).unwrap();
 
-        let result = validate_path_with_policy(
-            ".env",
-            Some(dir.path()),
-            Some(&policy),
-            AccessMode::Read,
-        );
+        let result =
+            validate_path_with_policy(".env", Some(dir.path()), Some(&policy), AccessMode::Read);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("denied by policy"),
-        );
+        assert!(result.unwrap_err().to_string().contains("denied by policy"),);
     }
 
     #[test]
@@ -650,11 +647,7 @@ mod tests {
         let external_file = external_dir.path().join("config.toml");
         std::fs::write(&external_file, "key=val").unwrap();
 
-        let policy = PathPolicy::new(
-            &[],
-            &[external_file.to_string_lossy().to_string()],
-        )
-        .unwrap();
+        let policy = PathPolicy::new(&[], &[external_file.to_string_lossy().to_string()]).unwrap();
 
         let result = validate_path_with_policy(
             external_file.to_str().unwrap(),
@@ -672,11 +665,7 @@ mod tests {
         let external_file = external_dir.path().join("config.toml");
         std::fs::write(&external_file, "key=val").unwrap();
 
-        let policy = PathPolicy::new(
-            &[],
-            &[external_file.to_string_lossy().to_string()],
-        )
-        .unwrap();
+        let policy = PathPolicy::new(&[], &[external_file.to_string_lossy().to_string()]).unwrap();
 
         let result = validate_path_with_policy(
             external_file.to_str().unwrap(),
@@ -722,9 +711,15 @@ mod tests {
     #[test]
     fn test_validate_path_rejects_relative_without_base() {
         let result = validate_path("some/file.txt", None);
-        assert!(result.is_err(), "Relative path without base_dir should be rejected");
+        assert!(
+            result.is_err(),
+            "Relative path without base_dir should be rejected"
+        );
         let err_msg = format!("{}", result.unwrap_err());
-        assert!(err_msg.contains("workspace"), "Error message should mention workspace: {err_msg}");
+        assert!(
+            err_msg.contains("workspace"),
+            "Error message should mention workspace: {err_msg}"
+        );
     }
 
     #[test]
@@ -734,6 +729,9 @@ mod tests {
         let file = dir.path().join("test.txt");
         std::fs::write(&file, "data").unwrap();
         let result = validate_path(file.to_str().unwrap(), None);
-        assert!(result.is_ok(), "Absolute path without base_dir should be allowed");
+        assert!(
+            result.is_ok(),
+            "Absolute path without base_dir should be allowed"
+        );
     }
 }

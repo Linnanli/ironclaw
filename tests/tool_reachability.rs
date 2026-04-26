@@ -19,12 +19,7 @@ use ironclaw::tools::ToolRegistry;
 /// All tool names that `register_builtin_tools()` should register.
 /// Note: Extension tools, image tools, restart, etc. are registered
 /// separately via dedicated methods that require extra state.
-const BUILTIN_TOOLS: &[&str] = &[
-    "echo",
-    "time",
-    "json",
-    "http",
-];
+const BUILTIN_TOOLS: &[&str] = &["echo", "time", "json", "http"];
 
 /// All tool names that `register_dev_tools()` should register.
 const DEV_TOOLS: &[&str] = &[
@@ -165,7 +160,10 @@ async fn test_web_tools_registered() {
     let registry = create_full_registry();
 
     // web_search
-    let ws = registry.get("web_search").await.expect("web_search should be registered");
+    let ws = registry
+        .get("web_search")
+        .await
+        .expect("web_search should be registered");
     assert_eq!(ws.name(), "web_search");
     let ws_schema = ws.parameters_schema();
     let ws_required: Vec<String> =
@@ -173,7 +171,10 @@ async fn test_web_tools_registered() {
     assert!(ws_required.contains(&"query".to_string()));
 
     // web_fetch
-    let wf = registry.get("web_fetch").await.expect("web_fetch should be registered");
+    let wf = registry
+        .get("web_fetch")
+        .await
+        .expect("web_fetch should be registered");
     assert_eq!(wf.name(), "web_fetch");
     let wf_schema = wf.parameters_schema();
     let wf_required: Vec<String> =

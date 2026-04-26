@@ -86,7 +86,9 @@ mod tests {
 
         let completed = rig.tool_calls_completed();
         assert!(
-            completed.iter().any(|(name, ok)| name == "plan_mode" && *ok),
+            completed
+                .iter()
+                .any(|(name, ok)| name == "plan_mode" && *ok),
             "plan_mode should succeed: {completed:?}"
         );
 
@@ -107,8 +109,15 @@ mod tests {
             "p2-session-fork",
             "Fork this conversation from turn 2",
             vec![
-                tool_call_step("session_fork", json!({ "at_turn": 2, "reason": "compare alternative" })),
-                text_step("Created a fork from turn 2 for side-by-side comparison.", 120, 20),
+                tool_call_step(
+                    "session_fork",
+                    json!({ "at_turn": 2, "reason": "compare alternative" }),
+                ),
+                text_step(
+                    "Created a fork from turn 2 for side-by-side comparison.",
+                    120,
+                    20,
+                ),
             ],
         );
 
@@ -157,7 +166,11 @@ mod tests {
                         "inherit_context": true
                     }),
                 ),
-                text_step("Verify sub-agent created and summarization started.", 130, 25),
+                text_step(
+                    "Verify sub-agent created and summarization started.",
+                    130,
+                    25,
+                ),
             ],
         );
 
@@ -175,7 +188,9 @@ mod tests {
 
         let completed = rig.tool_calls_completed();
         assert!(
-            completed.iter().any(|(name, ok)| name == "sub_agent" && *ok),
+            completed
+                .iter()
+                .any(|(name, ok)| name == "sub_agent" && *ok),
             "sub_agent should succeed: {completed:?}"
         );
 

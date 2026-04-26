@@ -310,9 +310,9 @@ impl CreateJobTool {
         {
             // Pass the originating conversation_id via metadata so the new job
             // can link back to it for frontend navigation.
-            let metadata = ctx.conversation_id.map(|conv_id| {
-                serde_json::json!({ "__conversation_id": conv_id.to_string() })
-            });
+            let metadata = ctx
+                .conversation_id
+                .map(|conv_id| serde_json::json!({ "__conversation_id": conv_id.to_string() }));
 
             return match scheduler
                 .dispatch_job(&ctx.user_id, title, description, metadata)

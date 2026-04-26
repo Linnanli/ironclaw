@@ -15,8 +15,8 @@
 //! ]);
 //! ```
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use rust_decimal::Decimal;
@@ -91,10 +91,12 @@ impl ScriptedLlm {
     fn next_step(&self) -> ScriptedStep {
         let idx = self.cursor.fetch_add(1, Ordering::SeqCst);
         let guard = self.steps.lock().expect("lock poisoned");
-        guard
-            .get(idx)
-            .cloned()
-            .unwrap_or_else(|| panic!("ScriptedLlm: no step at index {idx} (total: {})", guard.len()))
+        guard.get(idx).cloned().unwrap_or_else(|| {
+            panic!(
+                "ScriptedLlm: no step at index {idx} (total: {})",
+                guard.len()
+            )
+        })
     }
 }
 

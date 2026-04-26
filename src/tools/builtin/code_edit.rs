@@ -11,9 +11,7 @@ use async_trait::async_trait;
 use tokio::fs;
 
 use crate::context::JobContext;
-use crate::tools::builtin::path_utils::{
-    AccessMode, PathPolicy, validate_path_with_policy,
-};
+use crate::tools::builtin::path_utils::{AccessMode, PathPolicy, validate_path_with_policy};
 use crate::tools::tool::{
     ApprovalRequirement, Tool, ToolDomain, ToolError, ToolOutput, require_str,
 };
@@ -118,9 +116,8 @@ impl Tool for CodeEditTool {
             ));
         }
 
-        let content = String::from_utf8(raw).map_err(|_| {
-            ToolError::ExecutionFailed("File contains invalid UTF-8".to_string())
-        })?;
+        let content = String::from_utf8(raw)
+            .map_err(|_| ToolError::ExecutionFailed("File contains invalid UTF-8".to_string()))?;
 
         let actual_count = content.matches(old_string).count();
 
@@ -214,7 +211,9 @@ fn generate_diff_preview(old_content: &str, new_content: &str, path: &std::path:
     let mut diff = format!("--- a/{}\n+++ b/{}\n", path.display(), path.display());
 
     // Find first differing line region
-    let first_diff = old_lines.iter().zip(new_lines.iter())
+    let first_diff = old_lines
+        .iter()
+        .zip(new_lines.iter())
         .position(|(a, b)| a != b)
         .unwrap_or(old_lines.len().min(new_lines.len()));
 
@@ -430,9 +429,6 @@ mod tests {
         let content = "aaa bbb aaa bbb aaa";
         assert_eq!(replace_n(content, "aaa", "xxx", 2), "xxx bbb xxx bbb aaa");
         assert_eq!(replace_n(content, "aaa", "xxx", 1), "xxx bbb aaa bbb aaa");
-        assert_eq!(
-            replace_n(content, "aaa", "xxx", 3),
-            "xxx bbb xxx bbb xxx"
-        );
+        assert_eq!(replace_n(content, "aaa", "xxx", 3), "xxx bbb xxx bbb xxx");
     }
 }

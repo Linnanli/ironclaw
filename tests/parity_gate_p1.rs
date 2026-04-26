@@ -10,8 +10,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ironclaw::context::JobContext;
-use ironclaw::llm::prompt::{DynamicLayerInput, LayeredPromptBuilder, StaticLayerConfig};
 use ironclaw::llm::ToolDefinition;
+use ironclaw::llm::prompt::{DynamicLayerInput, LayeredPromptBuilder, StaticLayerConfig};
 use ironclaw::observability::{NoopObserver, PromptCacheMonitor};
 use ironclaw::tools::builtin::bash_validator::{self, CommandIntent};
 use ironclaw::tools::builtin::file_guard;
@@ -20,9 +20,7 @@ use ironclaw::tools::builtin::git::{
 };
 use ironclaw::tools::builtin::lsp::LspRegistry;
 use ironclaw::tools::builtin::path_utils;
-use ironclaw::tools::builtin::{
-    CodeEditTool, GlobSearchTool, GrepSearchTool, ReadFileTool,
-};
+use ironclaw::tools::builtin::{CodeEditTool, GlobSearchTool, GrepSearchTool, ReadFileTool};
 use ironclaw::tools::feature_flags::ToolFeatureFlags;
 use ironclaw::tools::{ApprovalRequirement, RiskLevel, Tool};
 
@@ -83,8 +81,16 @@ async fn fp_001_read_file_with_line_numbers() {
         .await
         .expect("FP-001: ReadFileTool should succeed");
 
-    let content = result.result.get("content").expect("content field").as_str().expect("str");
-    assert!(content.contains("alpha"), "FP-001: content should include file text");
+    let content = result
+        .result
+        .get("content")
+        .expect("content field")
+        .as_str()
+        .expect("str");
+    assert!(
+        content.contains("alpha"),
+        "FP-001: content should include file text"
+    );
 }
 
 /// FP-002: 搜索工作区中包含特定模式的文件
@@ -132,7 +138,10 @@ async fn fp_003_glob_search_file_types() {
 
     let text = result.result.as_str().unwrap_or("");
     assert!(text.contains("lib.rs"), "FP-003: should find .rs file");
-    assert!(!text.contains("main.ts"), "FP-003: should not find .ts file");
+    assert!(
+        !text.contains("main.ts"),
+        "FP-003: should not find .ts file"
+    );
 }
 
 /// FP-004: 编辑文件中的特定字符串
@@ -157,7 +166,10 @@ async fn fp_004_code_edit_string_replace() {
 
     assert_eq!(result.result["replaced_count"], 1);
     let content = std::fs::read_to_string(&file).expect("read");
-    assert!(content.contains("new_name"), "FP-004: replacement should apply");
+    assert!(
+        content.contains("new_name"),
+        "FP-004: replacement should apply"
+    );
 }
 
 /// FP-005: 编辑文件时检测二进制文件并拒绝
@@ -188,7 +200,10 @@ fn fp_006_file_size_limit_10mb() {
     let result = file_guard::check_size_limit(&big_file, None);
     assert!(result.is_err(), "FP-006: file over 10MB must be rejected");
     let err_msg = format!("{}", result.unwrap_err());
-    assert!(err_msg.contains("exceeds size limit"), "FP-006: error message should mention size");
+    assert!(
+        err_msg.contains("exceeds size limit"),
+        "FP-006: error message should mention size"
+    );
 }
 
 /// FP-007: Symlink 指向工作区外被拒绝
@@ -204,7 +219,10 @@ fn fp_007_symlink_escape_rejected() {
     std::os::unix::fs::symlink(&target, &link).expect("symlink");
 
     let result = file_guard::check_symlink_escape(&link, workspace.path());
-    assert!(result.is_err(), "FP-007: symlink escaping workspace must be rejected");
+    assert!(
+        result.is_err(),
+        "FP-007: symlink escaping workspace must be rejected"
+    );
 }
 
 /// FP-008: Shell 只读命令自动降级为 Low 风险
@@ -230,8 +248,16 @@ fn fp_008_shell_readonly_downgrade() {
 #[test]
 fn fp_009_shell_destructive_upgrade() {
     let result = bash_validator::validate("rm -rf /tmp/stuff", &ws());
-    assert_eq!(result.intent, CommandIntent::Destructive, "FP-009: rm -rf should be Destructive");
-    assert_eq!(result.risk_level, RiskLevel::High, "FP-009: destructive should be High risk");
+    assert_eq!(
+        result.intent,
+        CommandIntent::Destructive,
+        "FP-009: rm -rf should be Destructive"
+    );
+    assert_eq!(
+        result.risk_level,
+        RiskLevel::High,
+        "FP-009: destructive should be High risk"
+    );
 }
 
 /// FP-010: Shell sed -i 命令触发 sedValidation
@@ -239,7 +265,10 @@ fn fp_009_shell_destructive_upgrade() {
 fn fp_010_sed_inplace_validation() {
     let result = bash_validator::validate("sed -i 's/old/new/g' file.txt", &ws());
     let has_sed_warning = result.warnings.iter().any(|w| w.stage == "sed");
-    assert!(has_sed_warning, "FP-010: sed -i should produce a sed validation warning");
+    assert!(
+        has_sed_warning,
+        "FP-010: sed -i should produce a sed validation warning"
+    );
 }
 
 /// FP-011: Shell 命令语义分类为 CommandIntent 各类型
@@ -288,10 +317,15 @@ async fn fp_012_grep_context_lines() {
         .expect("FP-012: grep with context should succeed");
 
     let text = result.result.as_str().unwrap_or("");
-    assert!(text.contains("target_match"), "FP-012: should contain match");
+    assert!(
+        text.contains("target_match"),
+        "FP-012: should contain match"
+    );
     // Context lines should be present (line2 before, line4 after)
-    assert!(text.contains("line2") || text.contains("line4"),
-        "FP-012: should include at least one context line, got: {text}");
+    assert!(
+        text.contains("line2") || text.contains("line4"),
+        "FP-012: should include at least one context line, got: {text}"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -358,7 +392,11 @@ fn fp_016_git_status_risk_and_metadata() {
 fn fp_017_git_diff_metadata() {
     let tool = GitDiffTool::new();
     let params = serde_json::json!({});
-    assert_eq!(tool.risk_level_for(&params), RiskLevel::Low, "FP-017: git diff = Low");
+    assert_eq!(
+        tool.risk_level_for(&params),
+        RiskLevel::Low,
+        "FP-017: git diff = Low"
+    );
     assert_eq!(
         tool.requires_approval(&params),
         ApprovalRequirement::Never,
@@ -419,7 +457,10 @@ fn fp_019_git_push_always_requires_approval() {
 fn fp_020_git_auxiliary_tools() {
     let log_tool = GitLogTool::new();
     assert_eq!(log_tool.name(), "git_log");
-    assert_eq!(log_tool.risk_level_for(&serde_json::json!({})), RiskLevel::Low);
+    assert_eq!(
+        log_tool.risk_level_for(&serde_json::json!({})),
+        RiskLevel::Low
+    );
 
     let branch_tool = GitBranchTool::new();
     assert_eq!(branch_tool.name(), "git_branch");
@@ -483,8 +524,14 @@ fn fp_022_dynamic_layer_preserves_static_cache() {
     );
 
     // Both prompts should contain their respective dynamic content
-    assert!(prompt_v1.text.contains("pytest"), "FP-022: v1 should have pytest");
-    assert!(prompt_v2.text.contains("cargo test"), "FP-022: v2 should have cargo test");
+    assert!(
+        prompt_v1.text.contains("pytest"),
+        "FP-022: v1 should have pytest"
+    );
+    assert!(
+        prompt_v2.text.contains("cargo test"),
+        "FP-022: v2 should have cargo test"
+    );
 
     // With cache boundary, static portion should be identical prefix
     let builder_cached = LayeredPromptBuilder::new(&tools, &config).with_cache_boundary(true);
@@ -495,8 +542,16 @@ fn fp_022_dynamic_layer_preserves_static_cache() {
         "FP-022: cache boundary marker should be present"
     );
     // The prefix before the boundary should be identical
-    let prefix_v1 = p1.text.split("__PROMPT_CACHE_BOUNDARY__").next().expect("split");
-    let prefix_v2 = p2.text.split("__PROMPT_CACHE_BOUNDARY__").next().expect("split");
+    let prefix_v1 = p1
+        .text
+        .split("__PROMPT_CACHE_BOUNDARY__")
+        .next()
+        .expect("split");
+    let prefix_v2 = p2
+        .text
+        .split("__PROMPT_CACHE_BOUNDARY__")
+        .next()
+        .expect("split");
     assert_eq!(
         prefix_v1, prefix_v2,
         "FP-022: static prefix must be identical across dynamic changes"
@@ -528,7 +583,10 @@ fn sp_002_symlink_to_outside_rejected() {
     std::os::unix::fs::symlink(&secret, &link).expect("symlink");
 
     let result = file_guard::check_symlink_escape(&link, workspace.path());
-    assert!(result.is_err(), "SP-002: symlink to outside workspace must be rejected");
+    assert!(
+        result.is_err(),
+        "SP-002: symlink to outside workspace must be rejected"
+    );
 }
 
 /// SP-003: URL 编码的路径遍历 (%2e%2e) → 拒绝
@@ -541,7 +599,10 @@ fn sp_003_url_encoded_traversal_rejected() {
 
     let dir = TempDir::new().expect("tempdir");
     let result = path_utils::validate_path("%2e%2e/etc/passwd", Some(dir.path()));
-    assert!(result.is_err(), "SP-003: URL-encoded path must be rejected by validate_path");
+    assert!(
+        result.is_err(),
+        "SP-003: URL-encoded path must be rejected by validate_path"
+    );
 }
 
 /// SP-004: NUL 字节注入 (\x00) → 拒绝
@@ -554,7 +615,10 @@ fn sp_004_nul_byte_injection_rejected() {
 
     let dir = TempDir::new().expect("tempdir");
     let result = path_utils::validate_path("file\x00.txt", Some(dir.path()));
-    assert!(result.is_err(), "SP-004: NUL byte must be rejected by validate_path");
+    assert!(
+        result.is_err(),
+        "SP-004: NUL byte must be rejected by validate_path"
+    );
 }
 
 /// SP-005: Unicode 归一化攻击 → 拒绝 (basic path safe check)
@@ -681,12 +745,18 @@ async fn sp_014_lsp_whitelist_restricts_servers() {
 
     // Rust allowed
     assert!(
-        registry.language_id_for(Path::new("main.rs")).await.is_some(),
+        registry
+            .language_id_for(Path::new("main.rs"))
+            .await
+            .is_some(),
         "SP-014: whitelisted server should be available"
     );
     // TypeScript blocked
     assert!(
-        registry.language_id_for(Path::new("app.ts")).await.is_none(),
+        registry
+            .language_id_for(Path::new("app.ts"))
+            .await
+            .is_none(),
         "SP-014: non-whitelisted server should be blocked"
     );
 }
@@ -715,11 +785,26 @@ fn sp_016_admin_disable_code_tools() {
         "write_file".into(),
     ]);
 
-    assert!(!flags.is_tool_enabled("code_edit"), "SP-016: disabled tool must be rejected");
-    assert!(!flags.is_tool_enabled("shell"), "SP-016: disabled tool must be rejected");
-    assert!(!flags.is_tool_enabled("write_file"), "SP-016: disabled tool must be rejected");
-    assert!(flags.is_tool_enabled("read_file"), "SP-016: non-disabled tool should remain");
-    assert!(flags.is_tool_enabled("grep_search"), "SP-016: non-disabled tool should remain");
+    assert!(
+        !flags.is_tool_enabled("code_edit"),
+        "SP-016: disabled tool must be rejected"
+    );
+    assert!(
+        !flags.is_tool_enabled("shell"),
+        "SP-016: disabled tool must be rejected"
+    );
+    assert!(
+        !flags.is_tool_enabled("write_file"),
+        "SP-016: disabled tool must be rejected"
+    );
+    assert!(
+        flags.is_tool_enabled("read_file"),
+        "SP-016: non-disabled tool should remain"
+    );
+    assert!(
+        flags.is_tool_enabled("grep_search"),
+        "SP-016: non-disabled tool should remain"
+    );
 }
 
 /// SP-017: 工作区路径白名单外 → 所有文件操作拒绝
@@ -731,13 +816,17 @@ fn sp_017_workspace_path_whitelist() {
     let inner_file = workspace.path().join("inner.txt");
     std::fs::write(&inner_file, "ok").expect("write");
     assert!(
-        path_utils::validate_path(inner_file.to_str().expect("path"), Some(workspace.path())).is_ok(),
+        path_utils::validate_path(inner_file.to_str().expect("path"), Some(workspace.path()))
+            .is_ok(),
         "SP-017: path inside workspace should be allowed"
     );
 
     // Path outside workspace — rejected
     let result = path_utils::validate_path("/etc/passwd", Some(workspace.path()));
-    assert!(result.is_err(), "SP-017: path outside workspace must be rejected");
+    assert!(
+        result.is_err(),
+        "SP-017: path outside workspace must be rejected"
+    );
 }
 
 /// SP-018: LSP 服务器不在白名单 → 连接拒绝
@@ -745,18 +834,36 @@ fn sp_017_workspace_path_whitelist() {
 async fn sp_018_lsp_server_whitelist() {
     let registry = LspRegistry::new();
     // Apply strict whitelist: only rust-analyzer
-    registry
-        .apply_whitelist(&["rust-analyzer".into()])
-        .await;
+    registry.apply_whitelist(&["rust-analyzer".into()]).await;
 
     // Rust: allowed
-    assert!(registry.language_id_for(Path::new("lib.rs")).await.is_some());
+    assert!(
+        registry
+            .language_id_for(Path::new("lib.rs"))
+            .await
+            .is_some()
+    );
     // Python: blocked
-    assert!(registry.language_id_for(Path::new("main.py")).await.is_none());
+    assert!(
+        registry
+            .language_id_for(Path::new("main.py"))
+            .await
+            .is_none()
+    );
     // JavaScript: blocked
-    assert!(registry.language_id_for(Path::new("app.js")).await.is_none());
+    assert!(
+        registry
+            .language_id_for(Path::new("app.js"))
+            .await
+            .is_none()
+    );
     // TypeScript: blocked
-    assert!(registry.language_id_for(Path::new("index.tsx")).await.is_none());
+    assert!(
+        registry
+            .language_id_for(Path::new("index.tsx"))
+            .await
+            .is_none()
+    );
 }
 
 /// SP-019: Git 工具风险分级完整性
@@ -783,7 +890,10 @@ fn sp_019_git_risk_grading_complete() {
 
     // Mutation tools: Medium/High + requires approval
     let commit = GitCommitTool::new();
-    assert_eq!(commit.risk_level_for(&serde_json::json!({})), RiskLevel::Medium);
+    assert_eq!(
+        commit.risk_level_for(&serde_json::json!({})),
+        RiskLevel::Medium
+    );
     assert_eq!(
         commit.requires_approval(&serde_json::json!({})),
         ApprovalRequirement::UnlessAutoApproved,
@@ -808,10 +918,22 @@ fn sp_020_audit_log_completeness() {
     monitor.record(1000, 950, 50, true); // static layer changed
 
     let snap = monitor.snapshot();
-    assert_eq!(snap.total_requests, 3, "SP-020: all requests must be tracked");
-    assert_eq!(snap.total_input_tokens, 3000, "SP-020: input tokens must accumulate");
-    assert_eq!(snap.total_cache_read_tokens, 2650, "SP-020: cache reads must accumulate");
-    assert_eq!(snap.total_cache_creation_tokens, 350, "SP-020: cache creation must accumulate");
+    assert_eq!(
+        snap.total_requests, 3,
+        "SP-020: all requests must be tracked"
+    );
+    assert_eq!(
+        snap.total_input_tokens, 3000,
+        "SP-020: input tokens must accumulate"
+    );
+    assert_eq!(
+        snap.total_cache_read_tokens, 2650,
+        "SP-020: cache reads must accumulate"
+    );
+    assert_eq!(
+        snap.total_cache_creation_tokens, 350,
+        "SP-020: cache creation must accumulate"
+    );
 
     // Hit rate should be correct
     let expected_rate = 2650.0 / 3000.0;

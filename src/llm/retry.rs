@@ -52,12 +52,12 @@ pub(crate) fn is_retryable(err: &LlmError) -> bool {
             false
         }
         LlmError::RequestFailed { .. }
-            | LlmError::RateLimited { .. }
-            | LlmError::InvalidResponse { .. }
-            | LlmError::EmptyResponse { .. }
-            | LlmError::SessionRenewalFailed { .. }
-            | LlmError::Http(_)
-            | LlmError::Io(_) => true,
+        | LlmError::RateLimited { .. }
+        | LlmError::InvalidResponse { .. }
+        | LlmError::EmptyResponse { .. }
+        | LlmError::SessionRenewalFailed { .. }
+        | LlmError::Http(_)
+        | LlmError::Io(_) => true,
         _ => false,
     }
 }
@@ -279,7 +279,9 @@ impl LlmProvider for RetryProvider {
         request: ToolCompletionRequest,
         chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> Result<ToolCompletionResponse, LlmError> {
-        self.inner.complete_with_tools_stream(request, chunk_tx).await
+        self.inner
+            .complete_with_tools_stream(request, chunk_tx)
+            .await
     }
 }
 
@@ -420,7 +422,9 @@ mod tests {
 
     #[test]
     fn test_is_server_error_detection() {
-        assert!(is_server_error("HttpError: Invalid status code 500 Internal Server Error"));
+        assert!(is_server_error(
+            "HttpError: Invalid status code 500 Internal Server Error"
+        ));
         assert!(is_server_error("502 Bad Gateway"));
         assert!(is_server_error("status code 503 Service Unavailable"));
         assert!(is_server_error("504 Gateway Timeout"));

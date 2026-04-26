@@ -11,8 +11,8 @@
 
 use ironclaw::agent::session::{PendingPlan, PlanStep, Session, Thread, ThreadState};
 use ironclaw::context::JobContext;
-use ironclaw::tools::builtin::{PlanModeTool, SessionForkTool, SubAgentTool};
 use ironclaw::tools::builtin::sub_agent::SubAgentRole;
+use ironclaw::tools::builtin::{PlanModeTool, SessionForkTool, SubAgentTool};
 use ironclaw::tools::{ApprovalRequirement, RiskLevel, Tool};
 
 use uuid::Uuid;
@@ -337,7 +337,10 @@ async fn fp_028_verify_sub_agent_has_shell_and_git_diff() {
 
     // Verify has shell + git_diff
     assert!(names.contains(&"shell"), "verify should include shell");
-    assert!(names.contains(&"git_diff"), "verify should include git_diff");
+    assert!(
+        names.contains(&"git_diff"),
+        "verify should include git_diff"
+    );
     // Plus all explore tools
     assert!(names.contains(&"read_file"));
     assert!(names.contains(&"grep_search"));
@@ -443,25 +446,28 @@ async fn fp_030c_plan_mode_rejects_invalid() {
     assert!(tool.execute(serde_json::json!({}), &ctx).await.is_err());
 
     // Unknown action
-    assert!(tool
-        .execute(serde_json::json!({"action": "explode"}), &ctx)
-        .await
-        .is_err());
+    assert!(
+        tool.execute(serde_json::json!({"action": "explode"}), &ctx)
+            .await
+            .is_err()
+    );
 
     // Submit without plan
-    assert!(tool
-        .execute(serde_json::json!({"action": "submit"}), &ctx)
-        .await
-        .is_err());
+    assert!(
+        tool.execute(serde_json::json!({"action": "submit"}), &ctx)
+            .await
+            .is_err()
+    );
 
     // Submit with empty steps
-    assert!(tool
-        .execute(
+    assert!(
+        tool.execute(
             serde_json::json!({"action": "submit", "plan": {"goal": "x", "steps": []}}),
             &ctx
         )
         .await
-        .is_err());
+        .is_err()
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════════════

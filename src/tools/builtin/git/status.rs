@@ -3,9 +3,7 @@
 use std::time::Instant;
 
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 use super::runner::{resolve_workdir, run_git};
 
@@ -53,12 +51,7 @@ impl Tool for GitStatusTool {
         let branch = run_git(&["branch", "--show-current"], &workdir, None).await?;
 
         // Porcelain status (machine-parseable)
-        let status = run_git(
-            &["status", "--porcelain=v1", "--branch"],
-            &workdir,
-            None,
-        )
-        .await?;
+        let status = run_git(&["status", "--porcelain=v1", "--branch"], &workdir, None).await?;
 
         let result = serde_json::json!({
             "branch": branch.stdout.trim(),
@@ -99,14 +92,15 @@ mod tests {
     async fn test_git_status_in_repo() {
         let tool = GitStatusTool::new();
         let ctx = make_ctx();
-        let result = tool
-            .execute(serde_json::json!({}), &ctx)
-            .await;
+        let result = tool.execute(serde_json::json!({}), &ctx).await;
 
         match result {
             Ok(output) => {
                 // Result is JSON: { branch, status, exit_code }
-                assert!(output.result.get("branch").is_some(), "should have branch field");
+                assert!(
+                    output.result.get("branch").is_some(),
+                    "should have branch field"
+                );
             }
             Err(ToolError::ExecutionFailed(msg)) if msg.contains("spawn git") => {}
             Err(e) => panic!("Unexpected error: {}", e),
@@ -126,10 +120,7 @@ mod tests {
     #[test]
     fn test_risk_level() {
         let tool = GitStatusTool::new();
-        assert_eq!(
-            tool.risk_level_for(&serde_json::json!({})),
-            RiskLevel::Low
-        );
+        assert_eq!(tool.risk_level_for(&serde_json::json!({})), RiskLevel::Low);
     }
 
     #[test]

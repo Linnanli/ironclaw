@@ -31,8 +31,8 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 
-use client::LspClient;
 use crate::tools::tool::ToolError;
+use client::LspClient;
 
 /// Idle timeout before an LSP server is automatically shut down.
 const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
@@ -79,9 +79,7 @@ impl LspRegistry {
                 .extension()
                 .and_then(|e| e.to_str())
                 .unwrap_or("?");
-            ToolError::InvalidParameters(format!(
-                "No language server configured for .{ext} files"
-            ))
+            ToolError::InvalidParameters(format!("No language server configured for .{ext} files"))
         })?;
 
         let server_name = config.name.clone();
@@ -111,9 +109,7 @@ impl LspRegistry {
             workspace_root.display()
         );
 
-        let client = Arc::new(
-            LspClient::spawn(&server_name, &command, &args, &root_uri).await?,
-        );
+        let client = Arc::new(LspClient::spawn(&server_name, &command, &args, &root_uri).await?);
 
         servers.insert(
             server_name.clone(),
@@ -165,12 +161,7 @@ impl LspRegistry {
 
     /// List currently running server names.
     pub async fn running_servers(&self) -> Vec<String> {
-        self.servers
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect()
+        self.servers.lock().await.keys().cloned().collect()
     }
 }
 
@@ -196,18 +187,14 @@ mod tests {
     #[tokio::test]
     async fn test_language_id_for_rust() {
         let registry = LspRegistry::new();
-        let lang = registry
-            .language_id_for(Path::new("src/main.rs"))
-            .await;
+        let lang = registry.language_id_for(Path::new("src/main.rs")).await;
         assert_eq!(lang.as_deref(), Some("rust"));
     }
 
     #[tokio::test]
     async fn test_language_id_for_unknown() {
         let registry = LspRegistry::new();
-        let lang = registry
-            .language_id_for(Path::new("photo.jpg"))
-            .await;
+        let lang = registry.language_id_for(Path::new("photo.jpg")).await;
         assert!(lang.is_none());
     }
 

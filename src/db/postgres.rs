@@ -90,12 +90,7 @@ impl ConversationStore for PgBackend {
         attachments: &[PersistedAttachment],
     ) -> Result<Uuid, DatabaseError> {
         self.store
-            .add_conversation_message_with_attachments(
-                conversation_id,
-                role,
-                content,
-                attachments,
-            )
+            .add_conversation_message_with_attachments(conversation_id, role, content, attachments)
             .await
     }
 

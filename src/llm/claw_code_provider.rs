@@ -18,7 +18,7 @@ use claw_code_api::{
 use rust_decimal::Decimal;
 use secrecy::ExposeSecret;
 
-use crate::llm::config::{RegistryProviderConfig, OAUTH_PLACEHOLDER};
+use crate::llm::config::{OAUTH_PLACEHOLDER, RegistryProviderConfig};
 use crate::llm::error::LlmError;
 use crate::llm::provider::{
     ChatMessage, CompletionRequest, CompletionResponse, ContentPart, FinishReason, LlmProvider,
@@ -208,9 +208,9 @@ fn map_user_message(m: &ChatMessage) -> InputMessage {
     } else {
         for part in &m.content_parts {
             match part {
-                ContentPart::Text { text } => content.push(InputContentBlock::Text {
-                    text: text.clone(),
-                }),
+                ContentPart::Text { text } => {
+                    content.push(InputContentBlock::Text { text: text.clone() })
+                }
                 ContentPart::ImageUrl { image_url: _ } => {
                     // claw-code-api 的 InputContentBlock 目前不直接接受 OpenAI image_url，
                     // 交由未来扩展。此处降级为占位文本以免丢失语义。
@@ -388,7 +388,10 @@ fn build_anthropic_client(config: &RegistryProviderConfig) -> Result<ProviderCli
     // OAuth 优先：Anthropic Console 只发 session token 而不给 API key 的场景。
     let auth = match (
         registry_api_key(config),
-        config.oauth_token.as_ref().map(|t| t.expose_secret().to_string()),
+        config
+            .oauth_token
+            .as_ref()
+            .map(|t| t.expose_secret().to_string()),
     ) {
         (Some(api_key), Some(bearer_token)) => AuthSource::ApiKeyAndBearer {
             api_key,
@@ -430,15 +433,14 @@ enum ProviderVariant {
     OpenAi,
 }
 
-fn build_openai_compat_client(
-    config: &RegistryProviderConfig,
-) -> Result<ProviderClient, LlmError> {
+fn build_openai_compat_client(config: &RegistryProviderConfig) -> Result<ProviderClient, LlmError> {
     let api_key = registry_api_key(config).ok_or_else(|| LlmError::AuthFailed {
         provider: config.provider_id.clone(),
     })?;
 
     let (compat_config, variant) = pick_openai_compat_config(&config.model);
-    let client = OpenAiCompatClient::new(api_key, compat_config).with_base_url(config.base_url.clone());
+    let client =
+        OpenAiCompatClient::new(api_key, compat_config).with_base_url(config.base_url.clone());
     Ok(match variant {
         ProviderVariant::Xai => ProviderClient::Xai(client),
         ProviderVariant::OpenAi => ProviderClient::OpenAi(client),
@@ -469,7 +471,11 @@ impl LlmProvider for ClawCodeLlmProvider {
 
     async fn complete(&self, request: CompletionRequest) -> Result<CompletionResponse, LlmError> {
         let msg_req = build_chat_message_request(&request, &self.resolved_model);
-        let resp = self.client.send_message(&msg_req).await.map_err(map_api_error)?;
+        let resp = self
+            .client
+            .send_message(&msg_req)
+            .await
+            .map_err(map_api_error)?;
         let tool_resp = map_message_response(resp);
 
         // complete() 不支持工具；如果 LLM 意外返回工具调用，记作 Unknown finish。
@@ -494,7 +500,11 @@ impl LlmProvider for ClawCodeLlmProvider {
         request: ToolCompletionRequest,
     ) -> Result<ToolCompletionResponse, LlmError> {
         let msg_req = build_tool_message_request(&request, &self.resolved_model);
-        let resp = self.client.send_message(&msg_req).await.map_err(map_api_error)?;
+        let resp = self
+            .client
+            .send_message(&msg_req)
+            .await
+            .map_err(map_api_error)?;
         Ok(map_message_response(resp))
     }
 
@@ -712,7 +722,10 @@ mod tests {
     #[test]
     fn test_tool_choice_mapping() {
         assert!(matches!(map_tool_choice("auto"), Some(ApiToolChoice::Auto)));
-        assert!(matches!(map_tool_choice("required"), Some(ApiToolChoice::Any)));
+        assert!(matches!(
+            map_tool_choice("required"),
+            Some(ApiToolChoice::Any)
+        ));
         assert!(matches!(map_tool_choice("any"), Some(ApiToolChoice::Any)));
         assert!(map_tool_choice("none").is_none());
         match map_tool_choice("shell") {
@@ -1030,10 +1043,7 @@ mod tests {
         );
         let p = ClawCodeLlmProvider::from_registry_config(&cfg).expect("build");
         assert_eq!(p.model_name(), "claude-sonnet-4-6");
-        assert_eq!(
-            p.client_for_test().provider_kind(),
-            ProviderKind::Anthropic
-        );
+        assert_eq!(p.client_for_test().provider_kind(), ProviderKind::Anthropic);
     }
 
     #[test]
@@ -1049,10 +1059,7 @@ mod tests {
         );
         let p = ClawCodeLlmProvider::from_registry_config(&cfg).expect("build");
         assert_eq!(p.resolved_model, "claude-opus-4-6");
-        assert_eq!(
-            p.client_for_test().provider_kind(),
-            ProviderKind::Anthropic
-        );
+        assert_eq!(p.client_for_test().provider_kind(), ProviderKind::Anthropic);
     }
 
     #[test]
@@ -1250,7 +1257,10 @@ mod tests {
                 is_error,
             } => {
                 assert_eq!(tool_use_id, "tc-42");
-                assert!(!is_error, "safety-wrapped success output must not flip to is_error=true");
+                assert!(
+                    !is_error,
+                    "safety-wrapped success output must not flip to is_error=true"
+                );
                 assert_eq!(content.len(), 1);
                 match &content[0] {
                     ToolResultContentBlock::Text { text } => assert_eq!(text, wrapped),
@@ -1286,7 +1296,8 @@ mod tests {
         let clean_tool = "<<<UNTRUSTED-TOOL-OUTPUT tool=weather>>>sunny 22C<<<END>>>";
 
         let user_im = map_user_message(&mk_user(clean_user));
-        let tool_im = map_tool_result_message(&ChatMessage::tool_result("tc-1", "weather", clean_tool));
+        let tool_im =
+            map_tool_result_message(&ChatMessage::tool_result("tc-1", "weather", clean_tool));
 
         // 把映射结果序列化回字符串（这就是实际会塞进 HTTP body 的形状）
         let user_json = serde_json::to_string(&user_im).expect("user im serializable");
@@ -1328,7 +1339,13 @@ mod tests {
             scan.matches
         );
         // 双重保险：显式确认常见 key 前缀不出现
-        assert!(!observed.contains("sk-"), "observed error must not echo sk-* keys");
-        assert!(!observed.contains("Bearer "), "observed error must not echo Bearer tokens");
+        assert!(
+            !observed.contains("sk-"),
+            "observed error must not echo sk-* keys"
+        );
+        assert!(
+            !observed.contains("Bearer "),
+            "observed error must not echo Bearer tokens"
+        );
     }
 }

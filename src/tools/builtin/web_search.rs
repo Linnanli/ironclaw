@@ -17,10 +17,7 @@ use serde_json::json;
 use crate::context::JobContext;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolError, ToolOutput, require_str};
 
-const USER_AGENT: &str = concat!(
-    "IronClaw-WebSearch/",
-    env!("CARGO_PKG_VERSION"),
-);
+const USER_AGENT: &str = concat!("IronClaw-WebSearch/", env!("CARGO_PKG_VERSION"),);
 
 const REQUEST_TIMEOUT_SECS: u64 = 20;
 const MAX_RESULTS: usize = 8;
@@ -221,8 +218,8 @@ fn build_search_url(query: &str) -> Result<reqwest::Url, String> {
         return Ok(url);
     }
 
-    let mut url = reqwest::Url::parse("https://html.duckduckgo.com/html/")
-        .map_err(|e| e.to_string())?;
+    let mut url =
+        reqwest::Url::parse("https://html.duckduckgo.com/html/").map_err(|e| e.to_string())?;
     url.query_pairs_mut().append_pair("q", query);
     Ok(url)
 }
@@ -425,7 +422,9 @@ mod tests {
     #[test]
     fn test_build_search_url_default() {
         // Clear env in case test_build_search_url_custom_env ran first (parallel threads)
-        unsafe { std::env::remove_var("IRONCLAW_WEB_SEARCH_BASE_URL"); }
+        unsafe {
+            std::env::remove_var("IRONCLAW_WEB_SEARCH_BASE_URL");
+        }
         let url = build_search_url("rust lang").expect("should build URL");
         assert_eq!(url.host_str(), Some("html.duckduckgo.com"));
         assert!(url.query().expect("has query").contains("rust+lang"));
@@ -435,7 +434,10 @@ mod tests {
     fn test_build_search_url_custom_env() {
         // SAFETY: test-only, single-threaded test runner
         unsafe {
-            std::env::set_var("IRONCLAW_WEB_SEARCH_BASE_URL", "https://search.example.com/q");
+            std::env::set_var(
+                "IRONCLAW_WEB_SEARCH_BASE_URL",
+                "https://search.example.com/q",
+            );
         }
         let url = build_search_url("test query").expect("should build URL");
         assert_eq!(url.host_str(), Some("search.example.com"));
@@ -497,16 +499,28 @@ mod tests {
         let domains = vec!["example.com".to_string(), "rust-lang.org".to_string()];
         assert!(host_matches_list("https://www.example.com/page", &domains));
         assert!(host_matches_list("https://example.com/", &domains));
-        assert!(host_matches_list("https://doc.rust-lang.org/book/", &domains));
+        assert!(host_matches_list(
+            "https://doc.rust-lang.org/book/",
+            &domains
+        ));
         assert!(!host_matches_list("https://other.com/", &domains));
     }
 
     #[test]
     fn test_dedupe_hits() {
         let mut hits = vec![
-            SearchHit { title: "A".into(), url: "https://a.com".into() },
-            SearchHit { title: "B".into(), url: "https://b.com".into() },
-            SearchHit { title: "A dup".into(), url: "https://a.com".into() },
+            SearchHit {
+                title: "A".into(),
+                url: "https://a.com".into(),
+            },
+            SearchHit {
+                title: "B".into(),
+                url: "https://b.com".into(),
+            },
+            SearchHit {
+                title: "A dup".into(),
+                url: "https://a.com".into(),
+            },
         ];
         dedupe_hits(&mut hits);
         assert_eq!(hits.len(), 2);

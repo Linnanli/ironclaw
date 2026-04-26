@@ -25,7 +25,6 @@ use crate::llm::{
     ActionPlan, ChatMessage, LlmProvider, Reasoning, ReasoningContext, RespondResult,
     ResponseMetadata, ToolCall, ToolSelection,
 };
-use x_claw_agent::traits::HostError;
 use crate::safety::SafetyLayer;
 use crate::tenant::AdminScope;
 use crate::tools::execute::process_tool_result;
@@ -38,6 +37,7 @@ use crate::worker::autonomous_recovery::{
     EMPTY_TOOL_COMPLETION_NUDGE, FORCE_TEXT_RECOVERY_PROMPT,
 };
 use ironclaw_common::AppEvent;
+use x_claw_agent::traits::HostError;
 
 /// Shared dependencies for worker execution.
 ///
@@ -1078,7 +1078,13 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
         let context_manager = self.context_manager().clone();
         let store = self.deps.store.clone();
 
-        tokio::spawn(Self::do_broadcast_result(job_id, channels, content, context_manager, store));
+        tokio::spawn(Self::do_broadcast_result(
+            job_id,
+            channels,
+            content,
+            context_manager,
+            store,
+        ));
     }
 
     async fn do_broadcast_result(
@@ -1103,7 +1109,10 @@ Report when the job is complete or if you encounter issues you cannot resolve."#
 
         // Persist to DB so the message survives page refresh
         if let Some(ref s) = store {
-            if let Err(e) = s.add_conversation_message(conv_id, "assistant", &content).await {
+            if let Err(e) = s
+                .add_conversation_message(conv_id, "assistant", &content)
+                .await
+            {
                 tracing::warn!(job_id = %job_id, "broadcast_result: failed to persist message: {e}");
             }
         }

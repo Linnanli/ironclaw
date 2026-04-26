@@ -93,8 +93,8 @@ impl Tool for GrepSearchTool {
         let path_str = params.get("path").and_then(|v| v.as_str()).unwrap_or(".");
         let ctx_before = extract_usize(&params, "context_before", 0);
         let ctx_after = extract_usize(&params, "context_after", 0);
-        let max_results = extract_usize(&params, "max_results", DEFAULT_MAX_RESULTS)
-            .min(HARD_MAX_RESULTS);
+        let max_results =
+            extract_usize(&params, "max_results", DEFAULT_MAX_RESULTS).min(HARD_MAX_RESULTS);
 
         let re = regex::Regex::new(pattern_str)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid regex: {}", e)))?;
@@ -147,8 +147,9 @@ fn search_file(
         return Ok(Vec::new());
     }
 
-    let file = std::fs::File::open(path)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Cannot open {}: {}", path.display(), e)))?;
+    let file = std::fs::File::open(path).map_err(|e| {
+        ToolError::ExecutionFailed(format!("Cannot open {}: {}", path.display(), e))
+    })?;
 
     let reader = BufReader::new(file);
     let lines: Vec<String> = reader.lines().map_while(Result::ok).collect();
@@ -186,8 +187,9 @@ fn search_dir(
     }
 
     let mut all_matches = Vec::new();
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Cannot read dir {}: {}", dir.display(), e)))?;
+    let entries = std::fs::read_dir(dir).map_err(|e| {
+        ToolError::ExecutionFailed(format!("Cannot read dir {}: {}", dir.display(), e))
+    })?;
 
     let mut sorted: Vec<_> = entries.filter_map(Result::ok).collect();
     sorted.sort_by_key(|e| e.file_name());
@@ -234,11 +236,13 @@ fn collect_context(lines: &[String], index: usize, count: usize, before: bool) -
 
 fn read_head(path: &Path, n: usize) -> Result<Vec<u8>, ToolError> {
     use std::io::Read;
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Cannot open {}: {}", path.display(), e)))?;
+    let mut file = std::fs::File::open(path).map_err(|e| {
+        ToolError::ExecutionFailed(format!("Cannot open {}: {}", path.display(), e))
+    })?;
     let mut buf = vec![0u8; n];
-    let read = file.read(&mut buf)
-        .map_err(|e| ToolError::ExecutionFailed(format!("Cannot read {}: {}", path.display(), e)))?;
+    let read = file.read(&mut buf).map_err(|e| {
+        ToolError::ExecutionFailed(format!("Cannot read {}: {}", path.display(), e))
+    })?;
     buf.truncate(read);
     Ok(buf)
 }
@@ -246,8 +250,16 @@ fn read_head(path: &Path, n: usize) -> Result<Vec<u8>, ToolError> {
 fn is_ignored_dir(name: &str) -> bool {
     matches!(
         name,
-        "node_modules" | "target" | "dist" | "build" | ".git" | "__pycache__" | "vendor"
-            | ".next" | ".venv" | "venv"
+        "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".git"
+            | "__pycache__"
+            | "vendor"
+            | ".next"
+            | ".venv"
+            | "venv"
     )
 }
 
@@ -298,13 +310,18 @@ mod tests {
 
     fn setup_test_dir() -> tempfile::TempDir {
         let dir = tempdir().expect("tempdir");
-        fs::write(dir.path().join("hello.rs"), "fn main() {\n    println!(\"hello\");\n}\n")
-            .expect("write");
-        fs::write(dir.path().join("world.txt"), "hello world\ngoodbye world\n")
-            .expect("write");
+        fs::write(
+            dir.path().join("hello.rs"),
+            "fn main() {\n    println!(\"hello\");\n}\n",
+        )
+        .expect("write");
+        fs::write(dir.path().join("world.txt"), "hello world\ngoodbye world\n").expect("write");
         fs::create_dir(dir.path().join("sub")).expect("mkdir");
-        fs::write(dir.path().join("sub/nested.rs"), "// nested\nfn nested() {}\n")
-            .expect("write");
+        fs::write(
+            dir.path().join("sub/nested.rs"),
+            "// nested\nfn nested() {}\n",
+        )
+        .expect("write");
         dir
     }
 
@@ -328,11 +345,7 @@ mod tests {
     fn context_lines() {
         let dir = setup_test_dir();
         let re = regex::Regex::new("println").expect("regex");
-        let matches = search_file(
-            &re,
-            &dir.path().join("hello.rs"),
-            1, 1, 50,
-        ).expect("search");
+        let matches = search_file(&re, &dir.path().join("hello.rs"), 1, 1, 50).expect("search");
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].context_before.len(), 1);
         assert_eq!(matches[0].context_after.len(), 1);
@@ -342,7 +355,10 @@ mod tests {
     fn max_results_respected() {
         let dir = setup_test_dir();
         // Write file with many matches
-        let content = (0..100).map(|i| format!("line {}", i)).collect::<Vec<_>>().join("\n");
+        let content = (0..100)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
         fs::write(dir.path().join("many.txt"), &content).expect("write");
 
         let re = regex::Regex::new("line").expect("regex");
@@ -372,11 +388,19 @@ mod tests {
     fn ignored_dirs_skipped() {
         let dir = setup_test_dir();
         fs::create_dir(dir.path().join("node_modules")).expect("mkdir");
-        fs::write(dir.path().join("node_modules/pkg.js"), "hello from node_modules").expect("write");
+        fs::write(
+            dir.path().join("node_modules/pkg.js"),
+            "hello from node_modules",
+        )
+        .expect("write");
 
         let re = regex::Regex::new("hello").expect("regex");
         let matches = search_dir(&re, dir.path(), 0, 0, 50, 0).expect("search");
         // Should NOT include the node_modules match
-        assert!(matches.iter().all(|m| !m.file.to_string_lossy().contains("node_modules")));
+        assert!(
+            matches
+                .iter()
+                .all(|m| !m.file.to_string_lossy().contains("node_modules"))
+        );
     }
 }

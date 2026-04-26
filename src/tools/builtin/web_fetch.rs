@@ -18,10 +18,7 @@ use serde_json::json;
 use crate::context::JobContext;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolError, ToolOutput, require_str};
 
-const USER_AGENT: &str = concat!(
-    "IronClaw-WebFetch/",
-    env!("CARGO_PKG_VERSION"),
-);
+const USER_AGENT: &str = concat!("IronClaw-WebFetch/", env!("CARGO_PKG_VERSION"),);
 
 const REQUEST_TIMEOUT_SECS: u64 = 20;
 const MAX_REDIRECTS: usize = 10;
@@ -121,10 +118,7 @@ async fn execute_web_fetch(url: &str, prompt: &str) -> Result<FetchOutput, Strin
     let status = response.status();
     let final_url = response.url().to_string();
     let code = status.as_u16();
-    let code_text = status
-        .canonical_reason()
-        .unwrap_or("Unknown")
-        .to_string();
+    let code_text = status.canonical_reason().unwrap_or("Unknown").to_string();
     let content_type = response
         .headers()
         .get(reqwest::header::CONTENT_TYPE)
@@ -201,19 +195,14 @@ fn summarize_web_fetch(
     format!("Fetched {url}\n{detail}")
 }
 
-fn extract_title(
-    _content: &str,
-    raw_body: &str,
-    content_type: &str,
-) -> Option<String> {
+fn extract_title(_content: &str, raw_body: &str, content_type: &str) -> Option<String> {
     if content_type.contains("html") {
         let lowered = raw_body.to_lowercase();
         if let Some(start) = lowered.find("<title>") {
             let after = start + "<title>".len();
             if let Some(end_rel) = lowered[after..].find("</title>") {
-                let title = collapse_whitespace(&decode_html_entities(
-                    &raw_body[after..after + end_rel],
-                ));
+                let title =
+                    collapse_whitespace(&decode_html_entities(&raw_body[after..after + end_rel]));
                 if !title.is_empty() {
                     return Some(title);
                 }

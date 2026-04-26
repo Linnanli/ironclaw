@@ -62,8 +62,8 @@ impl ConversationStore for LibSqlBackend {
         let conn = self.connect().await?;
         let id = Uuid::new_v4();
         let now = fmt_ts(&Utc::now());
-        let attachments_json = serde_json::to_string(attachments)
-            .map_err(|e| DatabaseError::Query(e.to_string()))?;
+        let attachments_json =
+            serde_json::to_string(attachments).map_err(|e| DatabaseError::Query(e.to_string()))?;
         conn.execute(
                 "INSERT INTO conversation_messages (id, conversation_id, role, content, attachments, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![

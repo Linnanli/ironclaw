@@ -9,13 +9,11 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 
+use super::LspRegistry;
 use super::client::{self, LspClient};
 use super::protocol::LspAction;
-use super::LspRegistry;
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 /// LSP code intelligence tool.
 ///
@@ -105,8 +103,14 @@ impl Tool for LspQueryTool {
         let file_path = PathBuf::from(file_path_str);
 
         // Validate position for actions that require it.
-        let line = params.get("line").and_then(|v| v.as_u64()).map(|v| v as u32);
-        let col = params.get("column").and_then(|v| v.as_u64()).map(|v| v as u32);
+        let line = params
+            .get("line")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
+        let col = params
+            .get("column")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32);
 
         if action.requires_position() && (line.is_none() || col.is_none()) {
             return Err(ToolError::InvalidParameters(format!(
@@ -152,8 +156,7 @@ impl Tool for LspQueryTool {
 
         lsp.did_open(&file_uri, &language_id, &content).await?;
 
-        let result =
-            dispatch_action(&lsp, action, &file_uri, line, col, &params).await;
+        let result = dispatch_action(&lsp, action, &file_uri, line, col, &params).await;
 
         // Close the file after the request (best effort).
         let _ = lsp.did_close(&file_uri).await;
@@ -217,9 +220,10 @@ async fn dispatch_action(
         }
         LspAction::FindReferences => {
             let mut p = position_params(file_uri, line, col);
-            p.as_object_mut()
-                .expect("object")
-                .insert("context".into(), serde_json::json!({"includeDeclaration": true}));
+            p.as_object_mut().expect("object").insert(
+                "context".into(),
+                serde_json::json!({"includeDeclaration": true}),
+            );
             let result = lsp.request("textDocument/references", p).await?;
             Ok(format_locations(&result))
         }
@@ -236,11 +240,9 @@ async fn dispatch_action(
                 .await;
             match result {
                 Ok(val) => Ok(format_diagnostics(&val)),
-                Err(_) => Ok(
-                    "Diagnostics are published asynchronously by this server. \
+                Err(_) => Ok("Diagnostics are published asynchronously by this server. \
                      Try building the project to see errors."
-                        .to_string(),
-                ),
+                    .to_string()),
             }
         }
         LspAction::Hover => {
@@ -321,9 +323,7 @@ fn format_locations(value: &serde_json::Value) -> String {
             .or_else(|| loc.get("targetUri"))
             .and_then(|v| v.as_str())
             .unwrap_or("?");
-        let range = loc
-            .get("range")
-            .or_else(|| loc.get("targetRange"));
+        let range = loc.get("range").or_else(|| loc.get("targetRange"));
         let line_num = range
             .and_then(|r| r.get("start"))
             .and_then(|s| s.get("line"))
@@ -335,7 +335,11 @@ fn format_locations(value: &serde_json::Value) -> String {
         lines.push(format!("  {}:{}", path, line_num));
     }
 
-    format!("Found {} location(s):\n{}", locations.len(), lines.join("\n"))
+    format!(
+        "Found {} location(s):\n{}",
+        locations.len(),
+        lines.join("\n")
+    )
 }
 
 fn format_hover(value: &serde_json::Value) -> String {
@@ -391,10 +395,7 @@ fn format_diagnostics(value: &serde_json::Value) -> String {
             Some(4) => "HINT",
             _ => "DIAG",
         };
-        let msg = diag
-            .get("message")
-            .and_then(|m| m.as_str())
-            .unwrap_or("?");
+        let msg = diag.get("message").and_then(|m| m.as_str()).unwrap_or("?");
         let line_num = diag
             .get("range")
             .and_then(|r| r.get("start"))
@@ -416,10 +417,7 @@ fn format_symbols(value: &serde_json::Value) -> String {
 
     let mut lines = Vec::new();
     for sym in &symbols {
-        let name = sym
-            .get("name")
-            .and_then(|n| n.as_str())
-            .unwrap_or("?");
+        let name = sym.get("name").and_then(|n| n.as_str()).unwrap_or("?");
         let kind_num = sym.get("kind").and_then(|k| k.as_u64()).unwrap_or(0);
         let kind = symbol_kind_name(kind_num);
         let line_num = sym
@@ -475,14 +473,8 @@ fn format_completions(value: &serde_json::Value) -> String {
     let max_show = 20;
     let mut lines = Vec::new();
     for item in items.iter().take(max_show) {
-        let label = item
-            .get("label")
-            .and_then(|l| l.as_str())
-            .unwrap_or("?");
-        let detail = item
-            .get("detail")
-            .and_then(|d| d.as_str())
-            .unwrap_or("");
+        let label = item.get("label").and_then(|l| l.as_str()).unwrap_or("?");
+        let detail = item.get("detail").and_then(|d| d.as_str()).unwrap_or("");
         if detail.is_empty() {
             lines.push(format!("  {}", label));
         } else {
@@ -596,7 +588,10 @@ mod tests {
     #[test]
     fn test_format_diagnostics_empty() {
         let val = serde_json::json!({ "items": [] });
-        assert_eq!(format_diagnostics(&val), "No diagnostics (no errors or warnings).");
+        assert_eq!(
+            format_diagnostics(&val),
+            "No diagnostics (no errors or warnings)."
+        );
     }
 
     #[test]
@@ -692,10 +687,7 @@ mod tests {
         let registry = Arc::new(LspRegistry::new());
         let tool = LspQueryTool::new(registry);
         let params = serde_json::json!({"action": "goto_definition"});
-        assert_eq!(
-            tool.requires_approval(&params),
-            ApprovalRequirement::Never
-        );
+        assert_eq!(tool.requires_approval(&params), ApprovalRequirement::Never);
     }
 
     #[test]

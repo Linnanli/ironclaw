@@ -173,7 +173,10 @@ pub(crate) async fn enrich_workspace_root(
             if let Some(ws) = meta.get("workspace_root").and_then(|v| v.as_str()) {
                 tracing::debug!(conversation_id = %conv_id, workspace_root = %ws, "Enriched workspace_root from DB");
                 if let Some(obj) = job_ctx.metadata.as_object_mut() {
-                    obj.insert("workspace_root".to_string(), serde_json::Value::String(ws.to_string()));
+                    obj.insert(
+                        "workspace_root".to_string(),
+                        serde_json::Value::String(ws.to_string()),
+                    );
                 }
             } else {
                 tracing::warn!(conversation_id = %conv_id, metadata = ?meta, "Conversation metadata exists but has no workspace_root");

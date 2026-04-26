@@ -112,9 +112,7 @@ impl Tool for PlanModeTool {
                 let goal = plan
                     .get("goal")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        ToolError::InvalidParameters("plan.goal is required".into())
-                    })?;
+                    .ok_or_else(|| ToolError::InvalidParameters("plan.goal is required".into()))?;
 
                 let steps = plan
                     .get("steps")
@@ -124,7 +122,9 @@ impl Tool for PlanModeTool {
                     })?;
 
                 if steps.is_empty() {
-                    return Err(ToolError::InvalidParameters("plan must have at least one step".into()));
+                    return Err(ToolError::InvalidParameters(
+                        "plan must have at least one step".into(),
+                    ));
                 }
 
                 let confidence = plan
@@ -142,9 +142,10 @@ impl Tool for PlanModeTool {
                 })
             }
             other => {
-                return Err(ToolError::InvalidParameters(
-                    format!("unknown action '{}', expected toggle/status/submit", other),
-                ));
+                return Err(ToolError::InvalidParameters(format!(
+                    "unknown action '{}', expected toggle/status/submit",
+                    other
+                )));
             }
         };
 
@@ -216,7 +217,10 @@ mod tests {
                 "confidence": 0.8
             }
         });
-        let result = tool.execute(params, &test_ctx()).await.expect("submit should succeed");
+        let result = tool
+            .execute(params, &test_ctx())
+            .await
+            .expect("submit should succeed");
         assert_eq!(result.result["action"], "submit");
         assert_eq!(result.result["steps_count"], 2);
         assert_eq!(result.result["confidence"], 0.8);
@@ -260,10 +264,7 @@ mod tests {
     #[tokio::test]
     async fn test_plan_mode_missing_action() {
         let tool = PlanModeTool::new();
-        let err = tool
-            .execute(json!({}), &test_ctx())
-            .await
-            .unwrap_err();
+        let err = tool.execute(json!({}), &test_ctx()).await.unwrap_err();
         assert!(matches!(err, ToolError::InvalidParameters(_)));
     }
 }

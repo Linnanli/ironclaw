@@ -221,7 +221,9 @@ impl Scheduler {
                 .update_context_and_get(job_id, |ctx| {
                     // Extract __conversation_id before storing metadata so it
                     // doesn't pollute the LLM context with internal routing data.
-                    if let Some(conv_id_str) = meta.get("__conversation_id").and_then(|v| v.as_str()) {
+                    if let Some(conv_id_str) =
+                        meta.get("__conversation_id").and_then(|v| v.as_str())
+                    {
                         if let Ok(conv_id) = conv_id_str.parse::<uuid::Uuid>() {
                             ctx.conversation_id = Some(conv_id);
                         }

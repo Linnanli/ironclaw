@@ -211,7 +211,10 @@ mod tests {
             "required": ["child"]
         });
         let out = normalize_schema_strict(&input);
-        assert_eq!(out["properties"]["child"]["additionalProperties"], json!(false));
+        assert_eq!(
+            out["properties"]["child"]["additionalProperties"],
+            json!(false)
+        );
         assert_eq!(out["properties"]["child"]["required"], json!(["k"]));
     }
 }

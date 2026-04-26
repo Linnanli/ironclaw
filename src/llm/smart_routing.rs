@@ -972,7 +972,9 @@ impl LlmProvider for SmartRoutingProvider {
         request: ToolCompletionRequest,
         chunk_tx: tokio::sync::mpsc::UnboundedSender<String>,
     ) -> Result<ToolCompletionResponse, LlmError> {
-        self.primary.complete_with_tools_stream(request, chunk_tx).await
+        self.primary
+            .complete_with_tools_stream(request, chunk_tx)
+            .await
     }
 }
 

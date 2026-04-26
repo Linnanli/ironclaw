@@ -904,7 +904,9 @@ impl Tool for ShellTool {
         });
 
         if !validation.warnings.is_empty() {
-            let strs: Vec<String> = validation.warnings.iter()
+            let strs: Vec<String> = validation
+                .warnings
+                .iter()
                 .map(|w| format!("[{}] {}", w.stage, w.message))
                 .collect();
             result["warnings"] = serde_json::json!(strs);
@@ -917,9 +919,8 @@ impl Tool for ShellTool {
         extract_command_param(params)
             .map(|cmd| {
                 let pattern_risk = classify_command_risk(&cmd);
-                let semantic_risk = bash_validator::intent_to_risk_level(
-                    bash_validator::classify_intent(&cmd),
-                );
+                let semantic_risk =
+                    bash_validator::intent_to_risk_level(bash_validator::classify_intent(&cmd));
                 std::cmp::max(pattern_risk, semantic_risk)
             })
             .unwrap_or(RiskLevel::Medium)

@@ -5,9 +5,7 @@
 use std::time::Instant;
 
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 use super::runner::{resolve_workdir, run_git};
 
@@ -119,10 +117,7 @@ mod tests {
     #[test]
     fn test_always_high_risk() {
         let tool = GitPushTool::new();
-        assert_eq!(
-            tool.risk_level_for(&serde_json::json!({})),
-            RiskLevel::High
-        );
+        assert_eq!(tool.risk_level_for(&serde_json::json!({})), RiskLevel::High);
         assert_eq!(
             tool.risk_level_for(&serde_json::json!({"force": true})),
             RiskLevel::High

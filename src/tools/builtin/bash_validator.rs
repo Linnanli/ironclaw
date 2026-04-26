@@ -71,24 +71,91 @@ pub struct BashValidationResult {
 
 /// Commands that are strictly read-only (no filesystem or state modification).
 const READ_ONLY_COMMANDS: &[&str] = &[
-    "ls", "ll", "la", "dir", "cat", "head", "tail", "less", "more",
-    "wc", "sort", "uniq", "grep", "egrep", "fgrep", "rg", "ag", "fd",
-    "find", "which", "whereis", "whatis", "man", "info", "file", "stat",
-    "du", "df", "free", "uptime", "uname", "hostname", "whoami", "id",
-    "groups", "env", "printenv", "echo", "printf", "date", "cal", "bc",
-    "expr", "test", "true", "false", "pwd", "tree", "diff", "cmp",
-    "md5sum", "sha256sum", "sha1sum", "xxd", "od", "hexdump", "strings",
-    "readlink", "realpath", "basename", "dirname", "seq", "tput",
-    "column", "jq", "yq", "xargs", "tr", "cut", "paste",
-    "awk", "sed", "locate", "type",
+    "ls",
+    "ll",
+    "la",
+    "dir",
+    "cat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "wc",
+    "sort",
+    "uniq",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "ag",
+    "fd",
+    "find",
+    "which",
+    "whereis",
+    "whatis",
+    "man",
+    "info",
+    "file",
+    "stat",
+    "du",
+    "df",
+    "free",
+    "uptime",
+    "uname",
+    "hostname",
+    "whoami",
+    "id",
+    "groups",
+    "env",
+    "printenv",
+    "echo",
+    "printf",
+    "date",
+    "cal",
+    "bc",
+    "expr",
+    "test",
+    "true",
+    "false",
+    "pwd",
+    "tree",
+    "diff",
+    "cmp",
+    "md5sum",
+    "sha256sum",
+    "sha1sum",
+    "xxd",
+    "od",
+    "hexdump",
+    "strings",
+    "readlink",
+    "realpath",
+    "basename",
+    "dirname",
+    "seq",
+    "tput",
+    "column",
+    "jq",
+    "yq",
+    "xargs",
+    "tr",
+    "cut",
+    "paste",
+    "awk",
+    "sed",
+    "locate",
+    "type",
     // Process viewers (read-only, not process-modifying)
-    "ps", "top", "htop", "jobs",
+    "ps",
+    "top",
+    "htop",
+    "jobs",
 ];
 
 /// Commands that perform filesystem writes.
 const WRITE_COMMANDS: &[&str] = &[
-    "cp", "mv", "rm", "mkdir", "rmdir", "touch", "chmod", "chown",
-    "chgrp", "ln", "install", "tee", "truncate", "mkfifo", "mknod", "dd",
+    "cp", "mv", "rm", "mkdir", "rmdir", "touch", "chmod", "chown", "chgrp", "ln", "install", "tee",
+    "truncate", "mkfifo", "mknod", "dd",
 ];
 
 /// Commands that are always destructive regardless of arguments.
@@ -103,51 +170,108 @@ const DESTRUCTIVE_PATTERNS: &[(&str, &str)] = &[
     ("mkfs", "Filesystem creation destroys existing data"),
     ("dd if=", "Direct disk write — can overwrite partitions"),
     ("> /dev/sd", "Writing to raw disk device"),
-    ("chmod -R 777", "Recursively setting world-writable permissions"),
+    (
+        "chmod -R 777",
+        "Recursively setting world-writable permissions",
+    ),
     ("chmod -R 000", "Recursively removing all permissions"),
     (":(){ :|:& };:", "Fork bomb"),
 ];
 
 /// Commands that perform network operations.
 const NETWORK_COMMANDS: &[&str] = &[
-    "curl", "wget", "ssh", "scp", "rsync", "ftp", "sftp", "nc",
-    "ncat", "telnet", "ping", "traceroute", "dig", "nslookup",
-    "host", "whois", "ifconfig", "ip", "netstat", "ss", "nmap",
+    "curl",
+    "wget",
+    "ssh",
+    "scp",
+    "rsync",
+    "ftp",
+    "sftp",
+    "nc",
+    "ncat",
+    "telnet",
+    "ping",
+    "traceroute",
+    "dig",
+    "nslookup",
+    "host",
+    "whois",
+    "ifconfig",
+    "ip",
+    "netstat",
+    "ss",
+    "nmap",
 ];
 
 /// Commands that manage processes (modifying, not viewing).
 const PROCESS_COMMANDS: &[&str] = &[
-    "kill", "pkill", "killall", "bg", "fg", "nohup",
-    "disown", "wait", "nice", "renice",
+    "kill", "pkill", "killall", "bg", "fg", "nohup", "disown", "wait", "nice", "renice",
 ];
 
 /// Commands that manage packages.
 const PACKAGE_COMMANDS: &[&str] = &[
-    "apt", "apt-get", "yum", "dnf", "pacman", "brew", "pip", "pip3",
-    "npm", "yarn", "pnpm", "bun", "cargo", "gem", "go", "rustup",
-    "snap", "flatpak",
+    "apt", "apt-get", "yum", "dnf", "pacman", "brew", "pip", "pip3", "npm", "yarn", "pnpm", "bun",
+    "cargo", "gem", "go", "rustup", "snap", "flatpak",
 ];
 
 /// Commands that require system administrator privileges.
 const SYSTEM_ADMIN_COMMANDS: &[&str] = &[
-    "sudo", "su", "chroot", "mount", "umount", "fdisk", "parted",
-    "lsblk", "blkid", "systemctl", "service", "journalctl", "dmesg",
-    "modprobe", "insmod", "rmmod", "iptables", "ufw", "firewall-cmd",
-    "sysctl", "crontab", "at", "useradd", "userdel", "usermod",
-    "groupadd", "groupdel", "passwd", "visudo",
+    "sudo",
+    "su",
+    "chroot",
+    "mount",
+    "umount",
+    "fdisk",
+    "parted",
+    "lsblk",
+    "blkid",
+    "systemctl",
+    "service",
+    "journalctl",
+    "dmesg",
+    "modprobe",
+    "insmod",
+    "rmmod",
+    "iptables",
+    "ufw",
+    "firewall-cmd",
+    "sysctl",
+    "crontab",
+    "at",
+    "useradd",
+    "userdel",
+    "usermod",
+    "groupadd",
+    "groupdel",
+    "passwd",
+    "visudo",
 ];
 
 /// Git subcommands that are read-only safe.
 const GIT_READ_ONLY_SUBS: &[&str] = &[
-    "status", "log", "diff", "show", "branch", "tag", "stash",
-    "remote", "fetch", "ls-files", "ls-tree", "cat-file",
-    "rev-parse", "describe", "shortlog", "blame", "bisect", "reflog",
+    "status",
+    "log",
+    "diff",
+    "show",
+    "branch",
+    "tag",
+    "stash",
+    "remote",
+    "fetch",
+    "ls-files",
+    "ls-tree",
+    "cat-file",
+    "rev-parse",
+    "describe",
+    "shortlog",
+    "blame",
+    "bisect",
+    "reflog",
 ];
 
 /// System paths that workspace-scoped write commands should not target.
 const SYSTEM_PATHS: &[&str] = &[
-    "/etc/", "/usr/", "/var/", "/boot/", "/sys/", "/proc/",
-    "/dev/", "/sbin/", "/lib/", "/opt/",
+    "/etc/", "/usr/", "/var/", "/boot/", "/sys/", "/proc/", "/dev/", "/sbin/", "/lib/", "/opt/",
 ];
 
 // ─── Stage 1: Read-only detection ───────────────────────────────────────
@@ -156,9 +280,7 @@ const SYSTEM_PATHS: &[&str] = &[
 // CommandIntent::ReadOnly → RiskLevel::Low automatically.
 
 fn is_git_read_only(cmd: &str) -> bool {
-    let sub = cmd.split_whitespace()
-        .skip(1)
-        .find(|p| !p.starts_with('-'));
+    let sub = cmd.split_whitespace().skip(1).find(|p| !p.starts_with('-'));
     matches!(sub, Some(s) if GIT_READ_ONLY_SUBS.contains(&s))
 }
 
@@ -167,7 +289,10 @@ fn is_git_read_only(cmd: &str) -> bool {
 fn check_destructive(cmd: &str, first: &str) -> Option<ValidationWarning> {
     for &(pattern, desc) in DESTRUCTIVE_PATTERNS {
         if cmd.contains(pattern) {
-            return Some(ValidationWarning { stage: "destructive", message: desc.to_string() });
+            return Some(ValidationWarning {
+                stage: "destructive",
+                message: desc.to_string(),
+            });
         }
     }
     if DESTRUCTIVE_COMMANDS.contains(&first) {
@@ -259,7 +384,10 @@ fn classify_by_token(first: &str, cmd: &str) -> CommandIntent {
         return CommandIntent::ProcessManagement;
     }
     // Build tools with package management capabilities: sub-classify by subcommand
-    if matches!(first, "cargo" | "npm" | "yarn" | "pnpm" | "bun" | "pip" | "pip3" | "go") {
+    if matches!(
+        first,
+        "cargo" | "npm" | "yarn" | "pnpm" | "bun" | "pip" | "pip3" | "go"
+    ) {
         return classify_build_tool_intent(first, cmd);
     }
     if PACKAGE_COMMANDS.contains(&first) {
@@ -269,7 +397,11 @@ fn classify_by_token(first: &str, cmd: &str) -> CommandIntent {
         return CommandIntent::SystemAdmin;
     }
     if first == "git" {
-        return if is_git_read_only(cmd) { CommandIntent::ReadOnly } else { CommandIntent::Write };
+        return if is_git_read_only(cmd) {
+            CommandIntent::ReadOnly
+        } else {
+            CommandIntent::Write
+        };
     }
     CommandIntent::Unknown
 }
@@ -378,7 +510,8 @@ pub fn intent_to_risk_level(intent: CommandIntent) -> RiskLevel {
 /// For pipelines (`cmd1 | cmd2`), each segment is validated independently
 /// and the overall result takes the maximum risk across all segments.
 pub fn validate(cmd: &str, workspace: &Path) -> BashValidationResult {
-    let segments: Vec<&str> = cmd.split(['|', '&', ';'])
+    let segments: Vec<&str> = cmd
+        .split(['|', '&', ';'])
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .collect();
@@ -435,7 +568,11 @@ fn validate_segment(seg: &str, workspace: &Path) -> BashValidationResult {
         warnings.push(w);
     }
 
-    BashValidationResult { intent, risk_level: risk, warnings }
+    BashValidationResult {
+        intent,
+        risk_level: risk,
+        warnings,
+    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────
@@ -450,7 +587,9 @@ fn extract_first_command(cmd: &str) -> String {
         if let Some(eq_pos) = next.find('=') {
             let before_eq = &next[..eq_pos];
             let is_env_var = !before_eq.is_empty()
-                && before_eq.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+                && before_eq
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_');
             if is_env_var {
                 match next[eq_pos + 1..].find(' ') {
                     Some(space) => {
@@ -464,7 +603,11 @@ fn extract_first_command(cmd: &str) -> String {
         break;
     }
 
-    remaining.split_whitespace().next().unwrap_or("").to_string()
+    remaining
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_string()
 }
 
 // ─── Tests ──────────────────────────────────────────────────────────────
@@ -554,8 +697,11 @@ mod tests {
     #[test]
     fn home_dir_warning() {
         let r = validate("cat ~/secrets.txt", &ws());
-        assert!(r.warnings.iter().any(|w| w.stage == "path"
-            && w.message.contains("home directory")));
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.stage == "path" && w.message.contains("home directory"))
+        );
     }
 
     #[test]
@@ -603,8 +749,11 @@ mod tests {
     #[test]
     fn system_path_write_warning() {
         let r = validate("cp config.yaml /etc/app/", &ws());
-        assert!(r.warnings.iter().any(|w| w.stage == "path"
-            && w.message.contains("/etc/")));
+        assert!(
+            r.warnings
+                .iter()
+                .any(|w| w.stage == "path" && w.message.contains("/etc/"))
+        );
     }
 
     #[test]

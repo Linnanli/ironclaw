@@ -25,7 +25,9 @@ pub enum JobMode {
     ///
     /// **Deprecated since P3**: all Claude Code capabilities are now available
     /// natively. Set `CLAUDE_CODE_BRIDGE_ENABLED=true` to re-enable.
-    #[deprecated(note = "Use JobMode::Worker — Claude Code bridge is superseded by native ironclaw capabilities")]
+    #[deprecated(
+        note = "Use JobMode::Worker — Claude Code bridge is superseded by native ironclaw capabilities"
+    )]
     ClaudeCode,
     /// Lightweight sub-agent with restricted tool access and depth limit.
     SubAgent {

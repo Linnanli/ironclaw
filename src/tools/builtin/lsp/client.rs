@@ -6,8 +6,8 @@
 
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
@@ -58,24 +58,15 @@ impl LspClient {
         })?;
 
         let stdin = child.stdin.take().ok_or_else(|| {
-            ToolError::ExternalService(format!(
-                "[{}] Failed to capture stdin",
-                server_name
-            ))
+            ToolError::ExternalService(format!("[{}] Failed to capture stdin", server_name))
         })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            ToolError::ExternalService(format!(
-                "[{}] Failed to capture stdout",
-                server_name
-            ))
+            ToolError::ExternalService(format!("[{}] Failed to capture stdout", server_name))
         })?;
 
         let stderr = child.stderr.take().ok_or_else(|| {
-            ToolError::ExternalService(format!(
-                "[{}] Failed to capture stderr",
-                server_name
-            ))
+            ToolError::ExternalService(format!("[{}] Failed to capture stderr", server_name))
         })?;
 
         let pending: Arc<Mutex<HashMap<u64, oneshot::Sender<LspResponse>>>> =
@@ -377,9 +368,7 @@ pub fn path_to_uri(path: &Path) -> String {
     let abs = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
-            .unwrap_or_default()
-            .join(path)
+        std::env::current_dir().unwrap_or_default().join(path)
     };
     format!("file://{}", abs.display())
 }

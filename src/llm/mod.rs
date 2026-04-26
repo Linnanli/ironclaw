@@ -12,7 +12,6 @@
 mod bedrock;
 pub mod circuit_breaker;
 pub mod claw_code_provider;
-pub mod prompt;
 pub(crate) mod codex_auth;
 mod codex_chatgpt;
 pub mod config;
@@ -26,6 +25,7 @@ mod nearai_chat;
 pub mod oauth_helpers;
 pub mod openai_codex_provider;
 pub mod openai_codex_session;
+pub mod prompt;
 mod provider;
 mod reasoning;
 pub mod recording;

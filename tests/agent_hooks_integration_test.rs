@@ -80,11 +80,17 @@ async fn build_bundle() -> HookBundle {
     );
     let store = Arc::new(InMemorySecretsStore::new(crypto));
     store
-        .create("user-alice", CreateSecretParams::new("openai_key", "sk-alice-1"))
+        .create(
+            "user-alice",
+            CreateSecretParams::new("openai_key", "sk-alice-1"),
+        )
         .await
         .unwrap();
     store
-        .create("user-bob", CreateSecretParams::new("openai_key", "sk-bob-1"))
+        .create(
+            "user-bob",
+            CreateSecretParams::new("openai_key", "sk-bob-1"),
+        )
         .await
         .unwrap();
     let secrets: Arc<dyn SecretProvider> = Arc::new(AgentSecrets::new(store, "user-alice"));
@@ -230,16 +236,21 @@ async fn contract_secrets_never_leaks_across_users() {
     );
     let store = Arc::new(InMemorySecretsStore::new(crypto));
     store
-        .create("user-alice", CreateSecretParams::new("team_token", "alice-owned"))
+        .create(
+            "user-alice",
+            CreateSecretParams::new("team_token", "alice-owned"),
+        )
         .await
         .unwrap();
     store
-        .create("user-bob", CreateSecretParams::new("team_token", "bob-owned"))
+        .create(
+            "user-bob",
+            CreateSecretParams::new("team_token", "bob-owned"),
+        )
         .await
         .unwrap();
 
-    let alice: Arc<dyn SecretProvider> =
-        Arc::new(AgentSecrets::new(store.clone(), "user-alice"));
+    let alice: Arc<dyn SecretProvider> = Arc::new(AgentSecrets::new(store.clone(), "user-alice"));
     let bob: Arc<dyn SecretProvider> = Arc::new(AgentSecrets::new(store, "user-bob"));
 
     let a = alice.get("team_token").await.unwrap().unwrap();

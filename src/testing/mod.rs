@@ -694,9 +694,14 @@ mod tests {
             duration_secs: None,
         }];
 
-        db.add_conversation_message_with_attachments(conv_id, "user", "See attachment", &attachments)
-            .await
-            .expect("add message with attachments");
+        db.add_conversation_message_with_attachments(
+            conv_id,
+            "user",
+            "See attachment",
+            &attachments,
+        )
+        .await
+        .expect("add message with attachments");
 
         let msgs = db
             .list_conversation_messages(conv_id)

@@ -3,9 +3,7 @@
 use std::time::Instant;
 
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 use super::runner::{resolve_workdir, run_git};
 
@@ -55,7 +53,10 @@ impl Tool for GitDiffTool {
     ) -> Result<ToolOutput, ToolError> {
         let start = Instant::now();
         let path = params.get("path").and_then(|v| v.as_str());
-        let staged = params.get("staged").and_then(|v| v.as_bool()).unwrap_or(false);
+        let staged = params
+            .get("staged")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         let file_path = params.get("file_path").and_then(|v| v.as_str());
         let workdir = resolve_workdir(path, None)?;
 
@@ -115,9 +116,7 @@ mod tests {
         let tool = GitDiffTool::new();
         let ctx = make_ctx();
         // In a clean working tree, should return "No unstaged changes."
-        let result = tool
-            .execute(serde_json::json!({}), &ctx)
-            .await;
+        let result = tool.execute(serde_json::json!({}), &ctx).await;
         match result {
             Ok(output) => {
                 let text = output.result.as_str().unwrap_or_default();

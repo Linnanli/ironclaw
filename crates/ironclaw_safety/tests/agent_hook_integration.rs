@@ -27,12 +27,8 @@ use x_claw_agent::agentic_loop::{
 };
 use x_claw_agent::messages::FinishReason;
 use x_claw_agent::reasoning_ctx::ReasoningContext;
-use x_claw_agent::response_types::{
-    RespondOutput, RespondResult, ResponseMetadata, TokenUsage,
-};
-use x_claw_agent::{
-    ChatMessage, HookBundle, HostError, ToolCall,
-};
+use x_claw_agent::response_types::{RespondOutput, RespondResult, ResponseMetadata, TokenUsage};
+use x_claw_agent::{ChatMessage, HookBundle, HostError, ToolCall};
 
 /// Minimal `LoopDelegate` that returns pre-canned LLM responses.
 ///

@@ -7,9 +7,7 @@
 use std::time::Instant;
 
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 use super::runner::{resolve_workdir, run_git};
 
@@ -101,11 +99,7 @@ impl Tool for GitStaleCheckTool {
             None,
         )
         .await?;
-        let behind: u64 = behind_out
-            .stdout
-            .trim()
-            .parse()
-            .unwrap_or(0);
+        let behind: u64 = behind_out.stdout.trim().parse().unwrap_or(0);
 
         // Count commits ahead: commits in local not in upstream
         let ahead_out = run_git(
@@ -114,11 +108,7 @@ impl Tool for GitStaleCheckTool {
             None,
         )
         .await?;
-        let ahead: u64 = ahead_out
-            .stdout
-            .trim()
-            .parse()
-            .unwrap_or(0);
+        let ahead: u64 = ahead_out.stdout.trim().parse().unwrap_or(0);
 
         let needs_rebase = behind > 0;
         let message = if behind == 0 && ahead == 0 {

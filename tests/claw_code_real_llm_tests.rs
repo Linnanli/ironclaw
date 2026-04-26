@@ -31,12 +31,12 @@
 //!
 //! 参考：`docs/plans/architecture-refactor/04-phase2-claw-code-api.md` Step G。
 
+use ironclaw::llm::claw_code_provider::ClawCodeLlmProvider;
 use ironclaw::llm::config::{CacheRetention, RegistryProviderConfig};
+use ironclaw::llm::registry::ProviderProtocol;
 use ironclaw::llm::{
     ChatMessage, CompletionRequest, LlmProvider, ToolCompletionRequest, ToolDefinition,
 };
-use ironclaw::llm::claw_code_provider::ClawCodeLlmProvider;
-use ironclaw::llm::registry::ProviderProtocol;
 use secrecy::SecretString;
 use serde_json::json;
 
@@ -73,9 +73,7 @@ fn qwen_config(api_key: String) -> RegistryProviderConfig {
 /// 跳过辅助：缺密钥时打印提示但返回 `None` 让测试早退。
 fn provider_or_skip(test_name: &str) -> Option<ClawCodeLlmProvider> {
     let Some(api_key) = read_qwen_api_key() else {
-        eprintln!(
-            "⏭  skip {test_name}: set DASHSCOPE_API_KEY (or LLM_API_KEY) to run this test"
-        );
+        eprintln!("⏭  skip {test_name}: set DASHSCOPE_API_KEY (or LLM_API_KEY) to run this test");
         return None;
     };
     match ClawCodeLlmProvider::from_registry_config(&qwen_config(api_key)) {
@@ -105,7 +103,10 @@ async fn test_qwen_simple_text_completion() {
     .with_max_tokens(32)
     .with_temperature(0.0);
 
-    let resp = provider.complete(req).await.expect("completion should succeed");
+    let resp = provider
+        .complete(req)
+        .await
+        .expect("completion should succeed");
 
     eprintln!("→ content: {:?}", resp.content);
     eprintln!(
@@ -139,7 +140,10 @@ async fn test_qwen_multi_turn_history_preserved() {
     .with_max_tokens(16)
     .with_temperature(0.0);
 
-    let resp = provider.complete(req).await.expect("completion should succeed");
+    let resp = provider
+        .complete(req)
+        .await
+        .expect("completion should succeed");
     eprintln!("→ content: {:?}", resp.content);
 
     assert!(
@@ -249,9 +253,7 @@ async fn test_qwen_invalid_api_key_returns_clear_error() {
 #[ignore = "real network; run with --ignored + DASHSCOPE_API_KEY"]
 async fn test_qwen_via_create_registry_provider_with_env_switch() {
     let Some(api_key) = read_qwen_api_key() else {
-        eprintln!(
-            "⏭  skip: set DASHSCOPE_API_KEY (or LLM_API_KEY) to run this test"
-        );
+        eprintln!("⏭  skip: set DASHSCOPE_API_KEY (or LLM_API_KEY) to run this test");
         return;
     };
 
@@ -269,7 +271,10 @@ async fn test_qwen_via_create_registry_provider_with_env_switch() {
     .with_max_tokens(8)
     .with_temperature(0.0);
 
-    let resp = provider.complete(req).await.expect("complete should succeed");
+    let resp = provider
+        .complete(req)
+        .await
+        .expect("complete should succeed");
     eprintln!("→ content: {:?}", resp.content);
     assert!(!resp.content.is_empty());
 }
@@ -301,8 +306,7 @@ async fn test_qwen_full_tool_round_trip_with_final_answer() {
 
     let tool = ToolDefinition {
         name: "get_weather".to_string(),
-        description: "Get the current weather for a city. Returns a short description."
-            .to_string(),
+        description: "Get the current weather for a city. Returns a short description.".to_string(),
         parameters: json!({
             "type": "object",
             "properties": {
@@ -363,10 +367,13 @@ async fn test_qwen_full_tool_round_trip_with_final_answer() {
             .get("city")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let stub_result = format!(
-            "{{\"city\":\"{city}\",\"temp_c\":18,\"condition\":\"partly cloudy\"}}"
-        );
-        history.push(ChatMessage::tool_result(&call.id, "get_weather", stub_result));
+        let stub_result =
+            format!("{{\"city\":\"{city}\",\"temp_c\":18,\"condition\":\"partly cloudy\"}}");
+        history.push(ChatMessage::tool_result(
+            &call.id,
+            "get_weather",
+            stub_result,
+        ));
     }
 
     // --- 第二跳：模型应当消化工具结果生成最终自然语言答复 ---

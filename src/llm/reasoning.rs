@@ -28,7 +28,7 @@ pub use x_claw_agent::intent::{
 };
 pub use x_claw_agent::reasoning_ctx::ReasoningContext;
 pub use x_claw_agent::response_types::{
-    ResponseAnomaly, ResponseMetadata, RespondOutput, RespondResult, TokenUsage,
+    RespondOutput, RespondResult, ResponseAnomaly, ResponseMetadata, TokenUsage,
 };
 
 /// Token the agent returns when it has nothing to say (e.g. in group chats).
@@ -682,8 +682,7 @@ Respond in JSON format:
                     .into_iter()
                     .map(|mut tc| {
                         if tc.reasoning.as_ref().is_none_or(|r| r.trim().is_empty()) {
-                            tc.reasoning =
-                                narrative.as_ref().filter(|n| !n.is_empty()).cloned();
+                            tc.reasoning = narrative.as_ref().filter(|n| !n.is_empty()).cloned();
                         } else {
                             tc.reasoning = tc
                                 .reasoning
@@ -954,8 +953,7 @@ Example:
             channel: Some(self.build_channel_section()).filter(|s| !s.is_empty()),
             extensions_guidance: Some(self.build_extensions_section_for_tools(tools))
                 .filter(|s| !s.is_empty()),
-            conversation_context: Some(self.build_conversation_section())
-                .filter(|s| !s.is_empty()),
+            conversation_context: Some(self.build_conversation_section()).filter(|s| !s.is_empty()),
             group_guidance: Some(self.build_group_section()).filter(|s| !s.is_empty()),
             runtime_info: Some(self.build_runtime_section()).filter(|s| !s.is_empty()),
             ..Default::default()
@@ -2685,16 +2683,21 @@ That's my plan."#;
 
         let prompt = reasoning.build_system_prompt_layered(&tool_defs);
         // Static layer content
-        assert!(prompt.contains("My workspace rules"), "should contain identity");
+        assert!(
+            prompt.contains("My workspace rules"),
+            "should contain identity"
+        );
         assert!(prompt.contains("echo"), "should contain tool name");
         // Dynamic layer content
-        assert!(prompt.contains("Always use TDD"), "should contain skill context");
+        assert!(
+            prompt.contains("Always use TDD"),
+            "should contain skill context"
+        );
     }
 
     #[test]
     fn test_layered_prompt_inserts_boundary_for_claude() {
-        let reasoning = make_test_reasoning()
-            .with_model_name("claude-sonnet-4-20250514");
+        let reasoning = make_test_reasoning().with_model_name("claude-sonnet-4-20250514");
         let prompt = reasoning.build_system_prompt_layered(&[]);
         assert!(
             prompt.contains("__PROMPT_CACHE_BOUNDARY__"),
@@ -2704,8 +2707,7 @@ That's my plan."#;
 
     #[test]
     fn test_layered_prompt_omits_boundary_for_non_claude() {
-        let reasoning = make_test_reasoning()
-            .with_model_name("gpt-4o");
+        let reasoning = make_test_reasoning().with_model_name("gpt-4o");
         let prompt = reasoning.build_system_prompt_layered(&[]);
         assert!(
             !prompt.contains("__PROMPT_CACHE_BOUNDARY__"),

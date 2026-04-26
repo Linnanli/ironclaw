@@ -24,10 +24,7 @@ use crate::llm::{ChatMessage, Reasoning, ReasoningContext};
 use crate::tools::redact_params;
 use x_claw_agent::traits::HostError;
 
-fn disabled_names_from_metadata(
-    message: &IncomingMessage,
-    key: &str,
-) -> HashSet<String> {
+fn disabled_names_from_metadata(message: &IncomingMessage, key: &str) -> HashSet<String> {
     message
         .metadata
         .get(key)
@@ -56,10 +53,7 @@ fn filter_tools_by_disabled_extensions(
         .collect()
 }
 
-fn is_tool_disabled_by_extensions(
-    tool_name: &str,
-    disabled_extensions: &HashSet<String>,
-) -> bool {
+fn is_tool_disabled_by_extensions(tool_name: &str, disabled_extensions: &HashSet<String>) -> bool {
     disabled_extensions.iter().any(|ext| {
         tool_name
             .strip_prefix(ext)
@@ -385,8 +379,7 @@ impl<'a> LoopDelegate for ChatDelegate<'a> {
 
         // Refresh tool definitions each iteration so newly built tools become visible
         let tool_defs = self.agent.tools().tool_definitions().await;
-        let tool_defs =
-            filter_tools_by_disabled_extensions(tool_defs, &self.disabled_extensions);
+        let tool_defs = filter_tools_by_disabled_extensions(tool_defs, &self.disabled_extensions);
 
         // Apply trust-based tool attenuation if skills are active.
         let tool_defs = if !self.active_skills.is_empty() {
@@ -1213,11 +1206,7 @@ impl<'a> ChatDelegate<'a> {
         let forward_handle = tokio::spawn(async move {
             while let Some(chunk) = chunk_rx.recv().await {
                 let _ = channels
-                    .send_status(
-                        &channel_name,
-                        StatusUpdate::StreamChunk(chunk),
-                        &metadata,
-                    )
+                    .send_status(&channel_name, StatusUpdate::StreamChunk(chunk), &metadata)
                     .await;
             }
         });
@@ -1715,7 +1704,10 @@ mod tests {
                 .into_iter()
                 .collect();
 
-        assert!(is_tool_disabled_by_extensions("github_create_issue", &disabled));
+        assert!(is_tool_disabled_by_extensions(
+            "github_create_issue",
+            &disabled
+        ));
         assert!(is_tool_disabled_by_extensions("calendar_list", &disabled));
         assert!(!is_tool_disabled_by_extensions("shell", &disabled));
     }
@@ -1723,7 +1715,10 @@ mod tests {
     #[test]
     fn test_is_tool_disabled_by_extensions_returns_false_for_empty_set() {
         let disabled: std::collections::HashSet<String> = std::collections::HashSet::new();
-        assert!(!is_tool_disabled_by_extensions("github_create_issue", &disabled));
+        assert!(!is_tool_disabled_by_extensions(
+            "github_create_issue",
+            &disabled
+        ));
     }
 
     #[test]

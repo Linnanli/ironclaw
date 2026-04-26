@@ -11,11 +11,11 @@
 //! so Anthropic's automatic caching places the cache breakpoint correctly.
 //! Non-Anthropic models receive the combined prompt with no marker.
 
-mod static_layer;
 mod dynamic_layer;
+mod static_layer;
 
-pub use static_layer::StaticLayer;
 pub use dynamic_layer::DynamicLayerInput;
+pub use static_layer::StaticLayer;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -56,10 +56,7 @@ pub struct LayeredPromptBuilder {
 
 impl LayeredPromptBuilder {
     /// Create a new builder with the given tool definitions and static config.
-    pub fn new(
-        tools: &[ToolDefinition],
-        static_config: &StaticLayerConfig,
-    ) -> Self {
+    pub fn new(tools: &[ToolDefinition], static_config: &StaticLayerConfig) -> Self {
         let static_text = StaticLayer::build(tools, static_config);
         let hash = Self::compute_hash(tools, static_config);
         Self {
@@ -221,8 +218,7 @@ mod tests {
     fn test_build_includes_cache_boundary_when_enabled() {
         let tools = sample_tools();
         let config = sample_config();
-        let builder = LayeredPromptBuilder::new(&tools, &config)
-            .with_cache_boundary(true);
+        let builder = LayeredPromptBuilder::new(&tools, &config).with_cache_boundary(true);
         let prompt = builder.build(&DynamicLayerInput::default());
         assert!(prompt.text.contains("__PROMPT_CACHE_BOUNDARY__"));
     }
@@ -231,8 +227,7 @@ mod tests {
     fn test_build_omits_cache_boundary_when_disabled() {
         let tools = sample_tools();
         let config = sample_config();
-        let builder = LayeredPromptBuilder::new(&tools, &config)
-            .with_cache_boundary(false);
+        let builder = LayeredPromptBuilder::new(&tools, &config).with_cache_boundary(false);
         let prompt = builder.build(&DynamicLayerInput::default());
         assert!(!prompt.text.contains("__PROMPT_CACHE_BOUNDARY__"));
     }

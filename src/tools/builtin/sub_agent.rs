@@ -15,9 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::context::JobContext;
-use crate::tools::tool::{
-    ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput,
-};
+use crate::tools::tool::{ApprovalRequirement, RiskLevel, Tool, ToolDomain, ToolError, ToolOutput};
 
 /// Role a sub-agent can assume — determines its tool whitelist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -271,7 +269,10 @@ mod tests {
     async fn test_spawn_explore_sub_agent() {
         let tool = SubAgentTool::new();
         let params = json!({"role": "explore", "goal": "Find all usages of foo()"});
-        let result = tool.execute(params, &test_ctx()).await.expect("should succeed");
+        let result = tool
+            .execute(params, &test_ctx())
+            .await
+            .expect("should succeed");
         assert_eq!(result.result["action"], "spawn_sub_agent");
         assert_eq!(result.result["role"], "explore");
         assert_eq!(result.result["depth"], 1);
@@ -286,7 +287,10 @@ mod tests {
     async fn test_spawn_verify_sub_agent() {
         let tool = SubAgentTool::new();
         let params = json!({"role": "verify", "goal": "Check tests pass"});
-        let result = tool.execute(params, &test_ctx()).await.expect("should succeed");
+        let result = tool
+            .execute(params, &test_ctx())
+            .await
+            .expect("should succeed");
         assert_eq!(result.result["role"], "verify");
         let whitelist = result.result["tool_whitelist"].as_array().expect("array");
         assert!(whitelist.iter().any(|v| v == "shell"));
@@ -300,7 +304,10 @@ mod tests {
         let err = tool.execute(params, &test_ctx()).await.unwrap_err();
         assert!(matches!(err, ToolError::ExecutionFailed(_)));
         let msg = err.to_string();
-        assert!(msg.contains("depth limit"), "error should mention depth: {msg}");
+        assert!(
+            msg.contains("depth limit"),
+            "error should mention depth: {msg}"
+        );
     }
 
     #[tokio::test]
@@ -337,7 +344,10 @@ mod tests {
     async fn test_max_turns_clamped() {
         let tool = SubAgentTool::new();
         let params = json!({"role": "explore", "goal": "search", "max_turns": 100});
-        let result = tool.execute(params, &test_ctx()).await.expect("should succeed");
+        let result = tool
+            .execute(params, &test_ctx())
+            .await
+            .expect("should succeed");
         // Clamped to 30
         assert_eq!(result.result["max_turns"], 30);
     }
@@ -346,7 +356,10 @@ mod tests {
     async fn test_default_max_turns() {
         let tool = SubAgentTool::new();
         let params = json!({"role": "explore", "goal": "search"});
-        let result = tool.execute(params, &test_ctx()).await.expect("should succeed");
+        let result = tool
+            .execute(params, &test_ctx())
+            .await
+            .expect("should succeed");
         assert_eq!(result.result["max_turns"], DEFAULT_MAX_TURNS);
     }
 

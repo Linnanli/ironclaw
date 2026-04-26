@@ -3,8 +3,8 @@
 //! Tracks cache_read_tokens vs total_input_tokens across LLM requests,
 //! emitting `PromptCache` events and periodic `PromptCacheHitRate` metrics.
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing::{info, warn};
 
@@ -59,9 +59,7 @@ impl PromptCacheMonitor {
         });
 
         if static_layer_changed {
-            warn!(
-                "Prompt static layer changed — cache will be invalidated for next request"
-            );
+            warn!("Prompt static layer changed — cache will be invalidated for next request");
         }
 
         if req_no % STATS_LOG_INTERVAL == 0 {

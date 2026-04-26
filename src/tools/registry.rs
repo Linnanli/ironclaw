@@ -18,13 +18,13 @@ use crate::tools::builder::{
 };
 use crate::tools::builtin::{
     ApplyPatchTool, CancelJobTool, CodeEditTool, CreateJobTool, EchoTool, ExtensionInfoTool,
-    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool, GitStatusTool,
-    GlobSearchTool, GrepSearchTool, HttpTool, JobEventsTool, JobPromptTool, JobStatusTool,
-    JsonTool, ListDirTool, ListJobsTool, LspQueryTool, MemoryReadTool, MemorySearchTool,
-    MemoryTreeTool, MemoryWriteTool, PlanModeTool, PromptQueue, ReadFileTool, SessionForkTool,
-    ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool, SubAgentTool,
-    TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool, ToolRemoveTool,
-    ToolSearchTool, ToolUpgradeTool, WebFetchTool, WebSearchTool, WriteFileTool,
+    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool,
+    GitStatusTool, GlobSearchTool, GrepSearchTool, HttpTool, JobEventsTool, JobPromptTool,
+    JobStatusTool, JsonTool, ListDirTool, ListJobsTool, LspQueryTool, MemoryReadTool,
+    MemorySearchTool, MemoryTreeTool, MemoryWriteTool, PlanModeTool, PromptQueue, ReadFileTool,
+    SessionForkTool, ShellTool, SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool,
+    SubAgentTool, TimeTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool,
+    ToolRemoveTool, ToolSearchTool, ToolUpgradeTool, WebFetchTool, WebSearchTool, WriteFileTool,
 };
 use crate::tools::rate_limiter::RateLimiter;
 use crate::tools::tool::{ApprovalRequirement, Tool, ToolDomain};

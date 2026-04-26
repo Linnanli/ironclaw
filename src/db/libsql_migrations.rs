@@ -870,7 +870,11 @@ pub async fn run_incremental(conn: &libsql::Connection) -> Result<(), crate::err
                     "Failed to record skipped migration V{version} ({name}): {e}"
                 ))
             })?;
-            tracing::debug!(version, name, "libSQL: migration already satisfied by base schema");
+            tracing::debug!(
+                version,
+                name,
+                "libSQL: migration already satisfied by base schema"
+            );
             applied_count += 1;
             continue;
         }

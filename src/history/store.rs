@@ -130,8 +130,8 @@ impl Store {
     ) -> Result<Uuid, DatabaseError> {
         let conn = self.conn().await?;
         let id = Uuid::new_v4();
-        let attachments_json = serde_json::to_value(attachments)
-            .map_err(|e| DatabaseError::Query(e.to_string()))?;
+        let attachments_json =
+            serde_json::to_value(attachments).map_err(|e| DatabaseError::Query(e.to_string()))?;
 
         conn.execute(
             "INSERT INTO conversation_messages (id, conversation_id, role, content, attachments) VALUES ($1, $2, $3, $4, $5)",
@@ -2136,10 +2136,7 @@ impl Store {
             )
             .await?;
 
-        Ok(rows
-            .iter()
-            .map(row_to_conversation_message)
-            .collect())
+        Ok(rows.iter().map(row_to_conversation_message).collect())
     }
 }
 

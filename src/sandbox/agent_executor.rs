@@ -128,9 +128,9 @@ impl SandboxExecutor for SandboxAgentExecutor {
     async fn write_file(&self, path: &Path, data: &[u8]) -> Result<(), AgentSandboxError> {
         let safe = self.check_within_workspace(path)?;
         if let Some(parent) = safe.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                AgentSandboxError::Io(format!("mkdir {}: {e}", parent.display()))
-            })?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|e| AgentSandboxError::Io(format!("mkdir {}: {e}", parent.display())))?;
         }
         tokio::fs::write(&safe, data)
             .await
@@ -170,7 +170,9 @@ fn to_agent_error(err: IronclawSandboxError) -> AgentSandboxError {
             AgentSandboxError::PolicyViolation(reason)
         }
         IronclawSandboxError::CredentialInjectionFailed { domain, reason } => {
-            AgentSandboxError::ExecutionFailed(format!("credential injection for {domain}: {reason}"))
+            AgentSandboxError::ExecutionFailed(format!(
+                "credential injection for {domain}: {reason}"
+            ))
         }
         IronclawSandboxError::Docker(e) => AgentSandboxError::ExecutionFailed(e.to_string()),
         IronclawSandboxError::Io(e) => AgentSandboxError::Io(e.to_string()),
@@ -214,7 +216,9 @@ mod tests {
     async fn check_within_workspace_allows_relative_path_inside_root() {
         let tmp = tempfile::tempdir().unwrap();
         let exec = executor(tmp.path().to_path_buf());
-        let resolved = exec.check_within_workspace(Path::new("sub/file.txt")).unwrap();
+        let resolved = exec
+            .check_within_workspace(Path::new("sub/file.txt"))
+            .unwrap();
         assert!(resolved.starts_with(tmp.path()));
     }
 

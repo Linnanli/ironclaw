@@ -93,7 +93,14 @@ impl Tool for GlobSearchTool {
 
         let matcher = compile_glob(pattern)?;
         let mut results = Vec::new();
-        collect_matches(&search_root, &search_root, &matcher, max_results, 0, &mut results)?;
+        collect_matches(
+            &search_root,
+            &search_root,
+            &matcher,
+            max_results,
+            0,
+            &mut results,
+        )?;
 
         let output = format_results(&results, &search_root);
         Ok(ToolOutput::text(output, start.elapsed()))
@@ -216,8 +223,16 @@ fn collect_matches(
 fn is_ignored_dir(name: &str) -> bool {
     matches!(
         name,
-        "node_modules" | "target" | "dist" | "build" | ".git" | "__pycache__" | "vendor"
-            | ".next" | ".venv" | "venv"
+        "node_modules"
+            | "target"
+            | "dist"
+            | "build"
+            | ".git"
+            | "__pycache__"
+            | "vendor"
+            | ".next"
+            | ".venv"
+            | "venv"
     )
 }
 
@@ -308,6 +323,10 @@ mod tests {
         let mut results = Vec::new();
         collect_matches(dir.path(), dir.path(), &m, 100, 0, &mut results).expect("walk");
         // Should NOT include node_modules/dep.rs
-        assert!(results.iter().all(|p| !p.to_string_lossy().contains("node_modules")));
+        assert!(
+            results
+                .iter()
+                .all(|p| !p.to_string_lossy().contains("node_modules"))
+        );
     }
 }

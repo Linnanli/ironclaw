@@ -385,9 +385,7 @@ impl Agent {
                     )
                     .await;
 
-                let compactor = ContextCompactor::new(Arc::new(Reasoning::new(
-                    self.llm().clone(),
-                )));
+                let compactor = ContextCompactor::new(Arc::new(Reasoning::new(self.llm().clone())));
                 if let Err(e) = compactor
                     .compact(
                         thread,
@@ -1546,11 +1544,8 @@ impl Agent {
                 if let Ok(ref output) = deferred_result
                     && !output.is_empty()
                 {
-                    let result_meta = crate::channels::tool_enriched_metadata(
-                        &message.metadata,
-                        &tc.id,
-                        None,
-                    );
+                    let result_meta =
+                        crate::channels::tool_enriched_metadata(&message.metadata, &tc.id, None);
                     let _ = self
                         .channels
                         .send_status(
@@ -2162,7 +2157,11 @@ fn rebuild_user_chat_message(msg: &crate::history::ConversationMessage) -> ChatM
         return ChatMessage::user(&msg.content);
     }
 
-    let attachments: Vec<_> = msg.attachments.iter().map(|att| att.to_incoming()).collect();
+    let attachments: Vec<_> = msg
+        .attachments
+        .iter()
+        .map(|att| att.to_incoming())
+        .collect();
     match crate::agent::attachments::augment_with_attachments(&msg.content, &attachments) {
         Some(augmented) => ChatMessage::user_with_parts(augmented.text, augmented.image_parts),
         None => ChatMessage::user(&msg.content),

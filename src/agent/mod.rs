@@ -56,7 +56,7 @@ pub use session::{PendingApproval, PendingAuth, Session, Thread, ThreadState, Tu
 // `SessionManager` now lives in the `x_claw_agent` runtime crate (Phase 3
 // Step D-5, plan variant C'). Re-exported here for backward compatibility so
 // existing `crate::agent::SessionManager` call sites keep compiling.
-pub use x_claw_agent::SessionManager;
 pub use submission::{Submission, SubmissionParser, SubmissionResult};
 pub use task::{Task, TaskContext, TaskHandler, TaskOutput};
 pub use undo::{Checkpoint, UndoManager};
+pub use x_claw_agent::SessionManager;

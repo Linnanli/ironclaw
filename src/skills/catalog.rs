@@ -562,8 +562,10 @@ mod tests {
 
     #[test]
     fn test_skill_download_url_preserves_registry_query_params() {
-        let url =
-            skill_download_url("https://admin.example.com/api/v1?client_token=abc", "owner/demo");
+        let url = skill_download_url(
+            "https://admin.example.com/api/v1?client_token=abc",
+            "owner/demo",
+        );
         assert_eq!(
             url,
             "https://admin.example.com/api/v1/download?client_token=abc&slug=owner%2Fdemo"

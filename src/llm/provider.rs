@@ -18,8 +18,8 @@ use crate::llm::error::LlmError;
 pub use x_claw_agent::messages::{
     ChatMessage, CompletionRequest, CompletionResponse, ContentPart, FinishReason, ImageUrl,
     ModelMetadata, Role, ToolCall, ToolCompletionRequest, ToolCompletionResponse, ToolDefinition,
-    ToolResult, generate_tool_call_id, sanitize_tool_messages,
-    strip_unsupported_completion_params, strip_unsupported_tool_params,
+    ToolResult, generate_tool_call_id, sanitize_tool_messages, strip_unsupported_completion_params,
+    strip_unsupported_tool_params,
 };
 
 /// Trait for LLM providers.

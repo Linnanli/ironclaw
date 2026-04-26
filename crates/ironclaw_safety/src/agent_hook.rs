@@ -47,10 +47,7 @@ impl IronclawSafetyHook {
 
 #[async_trait]
 impl SafetyHook for IronclawSafetyHook {
-    async fn before_prompt(
-        &self,
-        prompt: &mut String,
-    ) -> Result<SafetyDecision, SafetyError> {
+    async fn before_prompt(&self, prompt: &mut String) -> Result<SafetyDecision, SafetyError> {
         // Fail-safe: if the prompt carries what looks like a credential,
         // refuse to send it. scan_inbound_for_secrets returns a
         // user-safe warning string when a secret is found.
@@ -60,10 +57,7 @@ impl SafetyHook for IronclawSafetyHook {
         Ok(SafetyDecision::Allow)
     }
 
-    async fn after_completion(
-        &self,
-        completion: &mut String,
-    ) -> Result<(), SafetyError> {
+    async fn after_completion(&self, completion: &mut String) -> Result<(), SafetyError> {
         match self.layer.leak_detector().scan_and_clean(completion) {
             Ok(cleaned) => {
                 if cleaned != *completion {
@@ -104,11 +98,7 @@ impl SafetyHook for IronclawSafetyHook {
         }
     }
 
-    async fn after_tool_output(
-        &self,
-        tool: &str,
-        output: &mut String,
-    ) -> Result<(), SafetyError> {
+    async fn after_tool_output(&self, tool: &str, output: &mut String) -> Result<(), SafetyError> {
         let sanitized = self.layer.sanitize_tool_output(tool, output);
         if sanitized.was_modified {
             *output = sanitized.content;
@@ -144,10 +134,7 @@ mod tests {
     #[tokio::test]
     async fn before_prompt_blocks_prompt_with_openai_key() {
         let hook = IronclawSafetyHook::new(layer());
-        let mut prompt = format!(
-            "use this key: sk-{}",
-            "A".repeat(48)
-        );
+        let mut prompt = format!("use this key: sk-{}", "A".repeat(48));
         let decision = hook.before_prompt(&mut prompt).await.unwrap();
         match decision {
             SafetyDecision::Block { .. } => {}
@@ -158,10 +145,7 @@ mod tests {
     #[tokio::test]
     async fn after_completion_redacts_when_leak_detected() {
         let hook = IronclawSafetyHook::new(layer());
-        let original = format!(
-            "the API key is sk-{}",
-            "A".repeat(48)
-        );
+        let original = format!("the API key is sk-{}", "A".repeat(48));
         let mut completion = original.clone();
         hook.after_completion(&mut completion).await.unwrap();
         // Either redacted in-place or replaced with block marker; either way
@@ -213,10 +197,7 @@ mod tests {
     #[tokio::test]
     async fn after_tool_output_strips_secret() {
         let hook = IronclawSafetyHook::new(layer());
-        let raw = format!(
-            "here is the token: sk-{}",
-            "B".repeat(48)
-        );
+        let raw = format!("here is the token: sk-{}", "B".repeat(48));
         let mut output = raw.clone();
         hook.after_tool_output("bash", &mut output).await.unwrap();
         // Leak detector must either redact or block; raw secret is gone.

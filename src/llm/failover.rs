@@ -395,9 +395,7 @@ impl LlmProvider for FailoverProvider {
         // Retrying on a different provider after chunks have already been
         // emitted would produce incoherent output.
         if let Some(provider) = self.providers.first() {
-            provider
-                .complete_with_tools_stream(request, chunk_tx)
-                .await
+            provider.complete_with_tools_stream(request, chunk_tx).await
         } else {
             Err(LlmError::RequestFailed {
                 provider: "failover".to_string(),

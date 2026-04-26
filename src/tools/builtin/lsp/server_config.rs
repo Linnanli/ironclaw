@@ -46,20 +46,26 @@ impl LspServerMapping {
             args: vec!["--stdio".into()],
         };
         ext_map.insert("ts".into(), ts_server.clone());
-        ext_map.insert("tsx".into(), LspServerConfig {
-            language_id: "typescriptreact".into(),
-            ..ts_server.clone()
-        });
+        ext_map.insert(
+            "tsx".into(),
+            LspServerConfig {
+                language_id: "typescriptreact".into(),
+                ..ts_server.clone()
+            },
+        );
 
         let js_server = LspServerConfig {
             language_id: "javascript".into(),
             ..ts_server.clone()
         };
         ext_map.insert("js".into(), js_server.clone());
-        ext_map.insert("jsx".into(), LspServerConfig {
-            language_id: "javascriptreact".into(),
-            ..js_server
-        });
+        ext_map.insert(
+            "jsx".into(),
+            LspServerConfig {
+                language_id: "javascriptreact".into(),
+                ..js_server
+            },
+        );
 
         let pyright = LspServerConfig {
             name: "pyright".into(),
@@ -93,11 +99,7 @@ impl LspServerMapping {
 
     /// Return all known server names (for admin listing).
     pub fn known_servers(&self) -> Vec<&str> {
-        let mut names: Vec<&str> = self
-            .ext_map
-            .values()
-            .map(|c| c.name.as_str())
-            .collect();
+        let mut names: Vec<&str> = self.ext_map.values().map(|c| c.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
         names
@@ -172,7 +174,10 @@ mod tests {
         let servers = m.known_servers();
         // ts/tsx/js/jsx all map to same server name
         assert_eq!(
-            servers.iter().filter(|s| **s == "typescript-language-server").count(),
+            servers
+                .iter()
+                .filter(|s| **s == "typescript-language-server")
+                .count(),
             1
         );
     }

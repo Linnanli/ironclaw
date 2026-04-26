@@ -9,10 +9,10 @@ pub mod file_guard;
 pub mod git;
 mod glob_search;
 mod grep_search;
-pub mod lsp;
 mod http;
 mod job;
 mod json;
+pub mod lsp;
 pub mod memory;
 mod message;
 pub mod path_utils;
@@ -29,13 +29,17 @@ mod tool_info;
 mod web_fetch;
 mod web_search;
 
+pub use code_edit::CodeEditTool;
 pub use echo::EchoTool;
 pub use extension_tools::{
     ExtensionInfoTool, ToolActivateTool, ToolAuthTool, ToolInstallTool, ToolListTool,
     ToolRemoveTool, ToolSearchTool, ToolUpgradeTool,
 };
 pub use file::{ApplyPatchTool, ListDirTool, ReadFileTool, WriteFileTool};
-pub use code_edit::CodeEditTool;
+pub use git::{
+    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool,
+    GitStatusTool,
+};
 pub use glob_search::GlobSearchTool;
 pub use grep_search::GrepSearchTool;
 pub use http::HttpTool;
@@ -44,28 +48,24 @@ pub use job::{
     PromptQueue, SchedulerSlot,
 };
 pub use json::JsonTool;
+pub use lsp::LspQueryTool;
 pub use memory::{MemoryReadTool, MemorySearchTool, MemoryTreeTool, MemoryWriteTool};
 pub use message::MessageTool;
+pub use plan_mode::PlanModeTool;
 pub use restart::RestartTool;
 pub use routine::{
     EventEmitTool, RoutineCreateTool, RoutineDeleteTool, RoutineFireTool, RoutineHistoryTool,
     RoutineListTool, RoutineUpdateTool,
 };
 pub use secrets_tools::{SecretDeleteTool, SecretListTool};
+pub use session_fork::SessionForkTool;
 pub use shell::ShellTool;
 pub use skill_tools::{SkillInstallTool, SkillListTool, SkillRemoveTool, SkillSearchTool};
+pub use sub_agent::{SubAgentRole, SubAgentTool};
 pub use time::TimeTool;
 pub use tool_info::ToolInfoTool;
 pub use web_fetch::WebFetchTool;
 pub use web_search::WebSearchTool;
-pub use git::{
-    GitBranchTool, GitCommitTool, GitDiffTool, GitLogTool, GitPushTool, GitStaleCheckTool,
-    GitStatusTool,
-};
-pub use lsp::LspQueryTool;
-pub use plan_mode::PlanModeTool;
-pub use session_fork::SessionForkTool;
-pub use sub_agent::{SubAgentRole, SubAgentTool};
 mod html_converter;
 pub mod image_analyze;
 pub mod image_edit;

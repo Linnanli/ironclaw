@@ -48,7 +48,11 @@ impl ImageEditTool {
     ///
     /// Validates the path against the given base directory sandbox to prevent
     /// path traversal attacks, then reads the file bytes.
-    async fn read_image_bytes(&self, image_path: &str, base: Option<&std::path::Path>) -> Result<Vec<u8>, ToolError> {
+    async fn read_image_bytes(
+        &self,
+        image_path: &str,
+        base: Option<&std::path::Path>,
+    ) -> Result<Vec<u8>, ToolError> {
         let resolved = validate_path(image_path, base)?;
 
         tokio::fs::read(&resolved)
@@ -118,7 +122,9 @@ impl Tool for ImageEditTool {
 
         // Read binary image bytes directly from filesystem
         let effective = super::path_utils::effective_base_dir(self.base_dir.as_deref(), ctx);
-        let image_bytes = self.read_image_bytes(image_path, effective.as_deref()).await?;
+        let image_bytes = self
+            .read_image_bytes(image_path, effective.as_deref())
+            .await?;
         if image_bytes.is_empty() {
             return Err(ToolError::ExecutionFailed(
                 "Source image file is empty".to_string(),
@@ -292,7 +298,9 @@ mod tests {
             Some(dir.path().to_path_buf()),
         );
 
-        let result = tool.read_image_bytes("../../etc/passwd", tool.base_dir.as_deref()).await;
+        let result = tool
+            .read_image_bytes("../../etc/passwd", tool.base_dir.as_deref())
+            .await;
         assert!(
             result.is_err(),
             "Should reject path traversal, got: {:?}",
@@ -310,7 +318,9 @@ mod tests {
             Some(dir.path().to_path_buf()),
         );
 
-        let result = tool.read_image_bytes("/etc/passwd", tool.base_dir.as_deref()).await;
+        let result = tool
+            .read_image_bytes("/etc/passwd", tool.base_dir.as_deref())
+            .await;
         assert!(
             result.is_err(),
             "Should reject absolute path outside sandbox, got: {:?}",
